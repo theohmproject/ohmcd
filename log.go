@@ -1,4 +1,4 @@
-// Copyright (c) 2013-2017 The btcsuite developers
+// Copyright (c) 2013-2017 The ohmcsuite developers
 // Copyright (c) 2017 The Decred developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
@@ -10,19 +10,19 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/btcsuite/btcd/addrmgr"
-	"github.com/btcsuite/btcd/blockchain"
-	"github.com/btcsuite/btcd/blockchain/indexers"
-	"github.com/btcsuite/btcd/connmgr"
-	"github.com/btcsuite/btcd/database"
-	"github.com/btcsuite/btcd/mempool"
-	"github.com/btcsuite/btcd/mining"
-	"github.com/btcsuite/btcd/mining/cpuminer"
-	"github.com/btcsuite/btcd/netsync"
-	"github.com/btcsuite/btcd/peer"
-	"github.com/btcsuite/btcd/txscript"
+	"github.com/ohmcsuite/ohmcd/addrmgr"
+	"github.com/ohmcsuite/ohmcd/blockchain"
+	"github.com/ohmcsuite/ohmcd/blockchain/indexers"
+	"github.com/ohmcsuite/ohmcd/connmgr"
+	"github.com/ohmcsuite/ohmcd/database"
+	"github.com/ohmcsuite/ohmcd/mempool"
+	"github.com/ohmcsuite/ohmcd/mining"
+	"github.com/ohmcsuite/ohmcd/mining/cpuminer"
+	"github.com/ohmcsuite/ohmcd/netsync"
+	"github.com/ohmcsuite/ohmcd/peer"
+	"github.com/ohmcsuite/ohmcd/txscript"
 
-	"github.com/btcsuite/btclog"
+	"github.com/ohmcsuite/ohmclog"
 	"github.com/jrick/logrotate/rotator"
 )
 
@@ -48,7 +48,7 @@ var (
 	// backendLog is the logging backend used to create all subsystem loggers.
 	// The backend must not be used before the log rotator has been initialized,
 	// or data races and/or nil pointer dereferences will occur.
-	backendLog = btclog.NewBackend(logWriter{})
+	backendLog = ohmclog.NewBackend(logWriter{})
 
 	// logRotator is one of the logging outputs.  It should be closed on
 	// application shutdown.
@@ -58,7 +58,7 @@ var (
 	amgrLog = backendLog.Logger("AMGR")
 	cmgrLog = backendLog.Logger("CMGR")
 	bcdbLog = backendLog.Logger("BCDB")
-	btcdLog = backendLog.Logger("BTCD")
+	ohmcdLog = backendLog.Logger("ohmcd")
 	chanLog = backendLog.Logger("CHAN")
 	discLog = backendLog.Logger("DISC")
 	indxLog = backendLog.Logger("INDX")
@@ -87,12 +87,12 @@ func init() {
 }
 
 // subsystemLoggers maps each subsystem identifier to its associated logger.
-var subsystemLoggers = map[string]btclog.Logger{
+var subsystemLoggers = map[string]ohmclog.Logger{
 	"ADXR": adxrLog,
 	"AMGR": amgrLog,
 	"CMGR": cmgrLog,
 	"BCDB": bcdbLog,
-	"BTCD": btcdLog,
+	"ohmcd": ohmcdLog,
 	"CHAN": chanLog,
 	"DISC": discLog,
 	"INDX": indxLog,
@@ -135,7 +135,7 @@ func setLogLevel(subsystemID string, logLevel string) {
 	}
 
 	// Defaults to info if the log level is invalid.
-	level, _ := btclog.LevelFromString(logLevel)
+	level, _ := ohmclog.LevelFromString(logLevel)
 	logger.SetLevel(level)
 }
 

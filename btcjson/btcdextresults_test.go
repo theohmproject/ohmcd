@@ -1,21 +1,21 @@
-// Copyright (c) 2016-2017 The btcsuite developers
+// Copyright (c) 2016-2017 The ohmcsuite developers
 // Copyright (c) 2015-2016 The Decred developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-package btcjson_test
+package ohmcjson_test
 
 import (
 	"encoding/json"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcjson"
+	"github.com/ohmcsuite/ohmcd/ohmcjson"
 )
 
-// TestBtcdExtCustomResults ensures any results that have custom marshalling
+// TestohmcdExtCustomResults ensures any results that have custom marshalling
 // work as inteded.
 // and unmarshal code of results are as expected.
-func TestBtcdExtCustomResults(t *testing.T) {
+func TestohmcdExtCustomResults(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -25,7 +25,7 @@ func TestBtcdExtCustomResults(t *testing.T) {
 	}{
 		{
 			name: "versionresult",
-			result: &btcjson.VersionResult{
+			result: &ohmcjson.VersionResult{
 				VersionString: "1.0.0",
 				Major:         1,
 				Minor:         0,

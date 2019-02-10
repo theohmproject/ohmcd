@@ -1,14 +1,14 @@
-// Copyright (c) 2015 The btcsuite developers
+// Copyright (c) 2015 The ohmcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-package btcjson_test
+package ohmcjson_test
 
 import (
 	"reflect"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcjson"
+	"github.com/ohmcsuite/ohmcd/ohmcjson"
 )
 
 // TestCmdMethod tests the CmdMethod function to ensure it retunrs the expected
@@ -25,35 +25,35 @@ func TestCmdMethod(t *testing.T) {
 		{
 			name: "unregistered type",
 			cmd:  (*int)(nil),
-			err:  btcjson.Error{ErrorCode: btcjson.ErrUnregisteredMethod},
+			err:  ohmcjson.Error{ErrorCode: ohmcjson.ErrUnregisteredMethod},
 		},
 		{
 			name:   "nil pointer of registered type",
-			cmd:    (*btcjson.GetBlockCmd)(nil),
+			cmd:    (*ohmcjson.GetBlockCmd)(nil),
 			method: "getblock",
 		},
 		{
 			name:   "nil instance of registered type",
-			cmd:    &btcjson.GetBlockCountCmd{},
+			cmd:    &ohmcjson.GetBlockCountCmd{},
 			method: "getblockcount",
 		},
 	}
 
 	t.Logf("Running %d tests", len(tests))
 	for i, test := range tests {
-		method, err := btcjson.CmdMethod(test.cmd)
+		method, err := ohmcjson.CmdMethod(test.cmd)
 		if reflect.TypeOf(err) != reflect.TypeOf(test.err) {
 			t.Errorf("Test #%d (%s) wrong error - got %T (%[3]v), "+
 				"want %T", i, test.name, err, test.err)
 			continue
 		}
 		if err != nil {
-			gotErrorCode := err.(btcjson.Error).ErrorCode
-			if gotErrorCode != test.err.(btcjson.Error).ErrorCode {
+			gotErrorCode := err.(ohmcjson.Error).ErrorCode
+			if gotErrorCode != test.err.(ohmcjson.Error).ErrorCode {
 				t.Errorf("Test #%d (%s) mismatched error code "+
 					"- got %v (%v), want %v", i, test.name,
 					gotErrorCode, err,
-					test.err.(btcjson.Error).ErrorCode)
+					test.err.(ohmcjson.Error).ErrorCode)
 				continue
 			}
 
@@ -78,12 +78,12 @@ func TestMethodUsageFlags(t *testing.T) {
 		name   string
 		method string
 		err    error
-		flags  btcjson.UsageFlag
+		flags  ohmcjson.UsageFlag
 	}{
 		{
 			name:   "unregistered type",
 			method: "bogusmethod",
-			err:    btcjson.Error{ErrorCode: btcjson.ErrUnregisteredMethod},
+			err:    ohmcjson.Error{ErrorCode: ohmcjson.ErrUnregisteredMethod},
 		},
 		{
 			name:   "getblock",
@@ -93,25 +93,25 @@ func TestMethodUsageFlags(t *testing.T) {
 		{
 			name:   "walletpassphrase",
 			method: "walletpassphrase",
-			flags:  btcjson.UFWalletOnly,
+			flags:  ohmcjson.UFWalletOnly,
 		},
 	}
 
 	t.Logf("Running %d tests", len(tests))
 	for i, test := range tests {
-		flags, err := btcjson.MethodUsageFlags(test.method)
+		flags, err := ohmcjson.MethodUsageFlags(test.method)
 		if reflect.TypeOf(err) != reflect.TypeOf(test.err) {
 			t.Errorf("Test #%d (%s) wrong error - got %T (%[3]v), "+
 				"want %T", i, test.name, err, test.err)
 			continue
 		}
 		if err != nil {
-			gotErrorCode := err.(btcjson.Error).ErrorCode
-			if gotErrorCode != test.err.(btcjson.Error).ErrorCode {
+			gotErrorCode := err.(ohmcjson.Error).ErrorCode
+			if gotErrorCode != test.err.(ohmcjson.Error).ErrorCode {
 				t.Errorf("Test #%d (%s) mismatched error code "+
 					"- got %v (%v), want %v", i, test.name,
 					gotErrorCode, err,
-					test.err.(btcjson.Error).ErrorCode)
+					test.err.(ohmcjson.Error).ErrorCode)
 				continue
 			}
 
@@ -141,7 +141,7 @@ func TestMethodUsageText(t *testing.T) {
 		{
 			name:   "unregistered type",
 			method: "bogusmethod",
-			err:    btcjson.Error{ErrorCode: btcjson.ErrUnregisteredMethod},
+			err:    ohmcjson.Error{ErrorCode: ohmcjson.ErrUnregisteredMethod},
 		},
 		{
 			name:     "getblockcount",
@@ -157,19 +157,19 @@ func TestMethodUsageText(t *testing.T) {
 
 	t.Logf("Running %d tests", len(tests))
 	for i, test := range tests {
-		usage, err := btcjson.MethodUsageText(test.method)
+		usage, err := ohmcjson.MethodUsageText(test.method)
 		if reflect.TypeOf(err) != reflect.TypeOf(test.err) {
 			t.Errorf("Test #%d (%s) wrong error - got %T (%[3]v), "+
 				"want %T", i, test.name, err, test.err)
 			continue
 		}
 		if err != nil {
-			gotErrorCode := err.(btcjson.Error).ErrorCode
-			if gotErrorCode != test.err.(btcjson.Error).ErrorCode {
+			gotErrorCode := err.(ohmcjson.Error).ErrorCode
+			if gotErrorCode != test.err.(ohmcjson.Error).ErrorCode {
 				t.Errorf("Test #%d (%s) mismatched error code "+
 					"- got %v (%v), want %v", i, test.name,
 					gotErrorCode, err,
-					test.err.(btcjson.Error).ErrorCode)
+					test.err.(ohmcjson.Error).ErrorCode)
 				continue
 			}
 
@@ -184,7 +184,7 @@ func TestMethodUsageText(t *testing.T) {
 		}
 
 		// Get the usage again to exercise caching.
-		usage, err = btcjson.MethodUsageText(test.method)
+		usage, err = ohmcjson.MethodUsageText(test.method)
 		if err != nil {
 			t.Errorf("Test #%d (%s) unexpected error: %v", i,
 				test.name, err)
@@ -420,7 +420,7 @@ func TestFieldUsage(t *testing.T) {
 	t.Logf("Running %d tests", len(tests))
 	for i, test := range tests {
 		// Ensure usage matches the expected value.
-		usage := btcjson.TstFieldUsage(test.field, test.defValue)
+		usage := ohmcjson.TstFieldUsage(test.field, test.defValue)
 		if usage != test.expected {
 			t.Errorf("Test #%d (%s) mismatched usage - got %v, "+
 				"want %v", i, test.name, usage, test.expected)

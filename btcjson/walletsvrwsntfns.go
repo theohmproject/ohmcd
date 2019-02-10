@@ -1,20 +1,20 @@
-// Copyright (c) 2014 The btcsuite developers
+// Copyright (c) 2014 The ohmcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
 // NOTE: This file is intended to house the RPC websocket notifications that are
 // supported by a wallet server.
 
-package btcjson
+package ohmcjson
 
 const (
 	// AccountBalanceNtfnMethod is the method used for account balance
 	// notifications.
 	AccountBalanceNtfnMethod = "accountbalance"
 
-	// BtcdConnectedNtfnMethod is the method used for notifications when
+	// ohmcdConnectedNtfnMethod is the method used for notifications when
 	// a wallet server is connected to a chain server.
-	BtcdConnectedNtfnMethod = "btcdconnected"
+	ohmcdConnectedNtfnMethod = "ohmcdconnected"
 
 	// WalletLockStateNtfnMethod is the method used to notify the lock state
 	// of a wallet has changed.
@@ -28,7 +28,7 @@ const (
 // AccountBalanceNtfn defines the accountbalance JSON-RPC notification.
 type AccountBalanceNtfn struct {
 	Account   string
-	Balance   float64 // In BTC
+	Balance   float64 // In ohmc
 	Confirmed bool    // Whether Balance is confirmed or unconfirmed.
 }
 
@@ -42,15 +42,15 @@ func NewAccountBalanceNtfn(account string, balance float64, confirmed bool) *Acc
 	}
 }
 
-// BtcdConnectedNtfn defines the btcdconnected JSON-RPC notification.
-type BtcdConnectedNtfn struct {
+// ohmcdConnectedNtfn defines the ohmcdconnected JSON-RPC notification.
+type ohmcdConnectedNtfn struct {
 	Connected bool
 }
 
-// NewBtcdConnectedNtfn returns a new instance which can be used to issue a
-// btcdconnected JSON-RPC notification.
-func NewBtcdConnectedNtfn(connected bool) *BtcdConnectedNtfn {
-	return &BtcdConnectedNtfn{
+// NewohmcdConnectedNtfn returns a new instance which can be used to issue a
+// ohmcdconnected JSON-RPC notification.
+func NewohmcdConnectedNtfn(connected bool) *ohmcdConnectedNtfn {
+	return &ohmcdConnectedNtfn{
 		Connected: connected,
 	}
 }
@@ -89,7 +89,7 @@ func init() {
 	flags := UFWalletOnly | UFWebsocketOnly | UFNotification
 
 	MustRegisterCmd(AccountBalanceNtfnMethod, (*AccountBalanceNtfn)(nil), flags)
-	MustRegisterCmd(BtcdConnectedNtfnMethod, (*BtcdConnectedNtfn)(nil), flags)
+	MustRegisterCmd(ohmcdConnectedNtfnMethod, (*ohmcdConnectedNtfn)(nil), flags)
 	MustRegisterCmd(WalletLockStateNtfnMethod, (*WalletLockStateNtfn)(nil), flags)
 	MustRegisterCmd(NewTxNtfnMethod, (*NewTxNtfn)(nil), flags)
 }

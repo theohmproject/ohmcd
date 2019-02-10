@@ -1,14 +1,14 @@
-// Copyright (c) 2014 The btcsuite developers
+// Copyright (c) 2014 The ohmcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-package btcjson_test
+package ohmcjson_test
 
 import (
 	"encoding/json"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcjson"
+	"github.com/ohmcsuite/ohmcd/ohmcjson"
 )
 
 // TestChainSvrCustomResults ensures any results that have custom marshalling
@@ -24,7 +24,7 @@ func TestChainSvrCustomResults(t *testing.T) {
 	}{
 		{
 			name: "custom vin marshal with coinbase",
-			result: &btcjson.Vin{
+			result: &ohmcjson.Vin{
 				Coinbase: "021234",
 				Sequence: 4294967295,
 			},
@@ -32,10 +32,10 @@ func TestChainSvrCustomResults(t *testing.T) {
 		},
 		{
 			name: "custom vin marshal without coinbase",
-			result: &btcjson.Vin{
+			result: &ohmcjson.Vin{
 				Txid: "123",
 				Vout: 1,
-				ScriptSig: &btcjson.ScriptSig{
+				ScriptSig: &ohmcjson.ScriptSig{
 					Asm: "0",
 					Hex: "00",
 				},
@@ -45,7 +45,7 @@ func TestChainSvrCustomResults(t *testing.T) {
 		},
 		{
 			name: "custom vinprevout marshal with coinbase",
-			result: &btcjson.VinPrevOut{
+			result: &ohmcjson.VinPrevOut{
 				Coinbase: "021234",
 				Sequence: 4294967295,
 			},
@@ -53,14 +53,14 @@ func TestChainSvrCustomResults(t *testing.T) {
 		},
 		{
 			name: "custom vinprevout marshal without coinbase",
-			result: &btcjson.VinPrevOut{
+			result: &ohmcjson.VinPrevOut{
 				Txid: "123",
 				Vout: 1,
-				ScriptSig: &btcjson.ScriptSig{
+				ScriptSig: &ohmcjson.ScriptSig{
 					Asm: "0",
 					Hex: "00",
 				},
-				PrevOut: &btcjson.PrevOut{
+				PrevOut: &ohmcjson.PrevOut{
 					Addresses: []string{"addr1"},
 					Value:     0,
 				},

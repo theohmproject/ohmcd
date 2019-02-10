@@ -1,9 +1,9 @@
-// Copyright (c) 2015 The btcsuite developers
+// Copyright (c) 2015 The ohmcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
 /*
-Package btcjson provides primitives for working with the bitcoin JSON-RPC API.
+Package ohmcjson provides primitives for working with the bitcoin JSON-RPC API.
 
 Overview
 
@@ -137,10 +137,10 @@ returned from the various functions available in this package.  They identify
 issues such as unsupported field types, attempts to register malformed commands,
 and attempting to create a new command with an improper number of parameters.
 The specific reason for the error can be detected by type asserting it to a
-*btcjson.Error and accessing the ErrorCode field.
+*ohmcjson.Error and accessing the ErrorCode field.
 
 The second category of errors (type RPCError), on the other hand, are useful for
 returning errors to RPC clients.  Consequently, they are used in the previously
 described Response type.
 */
-package btcjson
+package ohmcjson

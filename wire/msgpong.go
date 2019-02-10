@@ -1,4 +1,4 @@
-// Copyright (c) 2013-2015 The btcsuite developers
+// Copyright (c) 2013-2015 The ohmcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -20,29 +20,29 @@ type MsgPong struct {
 	Nonce uint64
 }
 
-// BtcDecode decodes r using the bitcoin protocol encoding into the receiver.
+// ohmcDecode decodes r using the bitcoin protocol encoding into the receiver.
 // This is part of the Message interface implementation.
-func (msg *MsgPong) BtcDecode(r io.Reader, pver uint32, enc MessageEncoding) error {
+func (msg *MsgPong) ohmcDecode(r io.Reader, pver uint32, enc MessageEncoding) error {
 	// NOTE: <= is not a mistake here.  The BIP0031 was defined as AFTER
 	// the version unlike most others.
 	if pver <= BIP0031Version {
 		str := fmt.Sprintf("pong message invalid for protocol "+
 			"version %d", pver)
-		return messageError("MsgPong.BtcDecode", str)
+		return messageError("MsgPong.ohmcDecode", str)
 	}
 
 	return readElement(r, &msg.Nonce)
 }
 
-// BtcEncode encodes the receiver to w using the bitcoin protocol encoding.
+// ohmcEncode encodes the receiver to w using the bitcoin protocol encoding.
 // This is part of the Message interface implementation.
-func (msg *MsgPong) BtcEncode(w io.Writer, pver uint32, enc MessageEncoding) error {
+func (msg *MsgPong) ohmcEncode(w io.Writer, pver uint32, enc MessageEncoding) error {
 	// NOTE: <= is not a mistake here.  The BIP0031 was defined as AFTER
 	// the version unlike most others.
 	if pver <= BIP0031Version {
 		str := fmt.Sprintf("pong message invalid for protocol "+
 			"version %d", pver)
-		return messageError("MsgPong.BtcEncode", str)
+		return messageError("MsgPong.ohmcEncode", str)
 	}
 
 	return writeElement(w, msg.Nonce)

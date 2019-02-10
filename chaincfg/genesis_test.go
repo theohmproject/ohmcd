@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2016 The btcsuite developers
+// Copyright (c) 2014-2016 The ohmcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -64,30 +64,30 @@ func TestRegTestGenesisBlock(t *testing.T) {
 	}
 }
 
-// TestTestNet3GenesisBlock tests the genesis block of the test network (version
+// TestTestNet4GenesisBlock tests the genesis block of the test network (version
 // 3) for validity by checking the encoded bytes and hashes.
-func TestTestNet3GenesisBlock(t *testing.T) {
+func TestTestNet4GenesisBlock(t *testing.T) {
 	// Encode the genesis block to raw bytes.
 	var buf bytes.Buffer
-	err := TestNet3Params.GenesisBlock.Serialize(&buf)
+	err := TestNet4Params.GenesisBlock.Serialize(&buf)
 	if err != nil {
-		t.Fatalf("TestTestNet3GenesisBlock: %v", err)
+		t.Fatalf("TestTestNet4GenesisBlock: %v", err)
 	}
 
 	// Ensure the encoded block matches the expected bytes.
-	if !bytes.Equal(buf.Bytes(), testNet3GenesisBlockBytes) {
-		t.Fatalf("TestTestNet3GenesisBlock: Genesis block does not "+
+	if !bytes.Equal(buf.Bytes(), TestNet4GenesisBlockBytes) {
+		t.Fatalf("TestTestNet4GenesisBlock: Genesis block does not "+
 			"appear valid - got %v, want %v",
 			spew.Sdump(buf.Bytes()),
-			spew.Sdump(testNet3GenesisBlockBytes))
+			spew.Sdump(TestNet4GenesisBlockBytes))
 	}
 
 	// Check hash of the block against expected hash.
-	hash := TestNet3Params.GenesisBlock.BlockHash()
-	if !TestNet3Params.GenesisHash.IsEqual(&hash) {
-		t.Fatalf("TestTestNet3GenesisBlock: Genesis block hash does "+
+	hash := TestNet4Params.GenesisBlock.BlockHash()
+	if !TestNet4Params.GenesisHash.IsEqual(&hash) {
+		t.Fatalf("TestTestNet4GenesisBlock: Genesis block hash does "+
 			"not appear valid - got %v, want %v", spew.Sdump(hash),
-			spew.Sdump(TestNet3Params.GenesisHash))
+			spew.Sdump(TestNet4Params.GenesisHash))
 	}
 }
 
@@ -200,9 +200,9 @@ var regTestGenesisBlockBytes = []byte{
 	0xac, 0x00, 0x00, 0x00, 0x00, /* |.....|    */
 }
 
-// testNet3GenesisBlockBytes are the wire encoded bytes for the genesis block of
+// TestNet4GenesisBlockBytes are the wire encoded bytes for the genesis block of
 // the test network (version 3) as of protocol version 60002.
-var testNet3GenesisBlockBytes = []byte{
+var TestNet4GenesisBlockBytes = []byte{
 	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* |........| */
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* |........| */
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* |........| */

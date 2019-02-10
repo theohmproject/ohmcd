@@ -1,4 +1,4 @@
-// Copyright (c) 2013-2016 The btcsuite developers
+// Copyright (c) 2013-2016 The ohmcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -152,8 +152,8 @@ const (
 	// TestNet represents the regression test network.
 	TestNet BitcoinNet = 0xdab5bffa
 
-	// TestNet3 represents the test network (version 3).
-	TestNet3 BitcoinNet = 0x0709110b
+	// TestNet4 represents the test network (version 3).
+	TestNet4 BitcoinNet = 0x0709110b
 
 	// SimNet represents the simulation test network.
 	SimNet BitcoinNet = 0x12141c16
@@ -164,7 +164,7 @@ const (
 var bnStrings = map[BitcoinNet]string{
 	MainNet:  "MainNet",
 	TestNet:  "TestNet",
-	TestNet3: "TestNet3",
+	TestNet4: "TestNet4",
 	SimNet:   "SimNet",
 }
 

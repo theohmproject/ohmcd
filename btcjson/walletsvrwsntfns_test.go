@@ -1,8 +1,8 @@
-// Copyright (c) 2014 The btcsuite developers
+// Copyright (c) 2014 The ohmcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-package btcjson_test
+package ohmcjson_test
 
 import (
 	"bytes"
@@ -11,7 +11,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcjson"
+	"github.com/ohmcsuite/ohmcd/ohmcjson"
 )
 
 // TestWalletSvrWsNtfns tests all of the chain server websocket-specific
@@ -31,58 +31,58 @@ func TestWalletSvrWsNtfns(t *testing.T) {
 		{
 			name: "accountbalance",
 			newNtfn: func() (interface{}, error) {
-				return btcjson.NewCmd("accountbalance", "acct", 1.25, true)
+				return ohmcjson.NewCmd("accountbalance", "acct", 1.25, true)
 			},
 			staticNtfn: func() interface{} {
-				return btcjson.NewAccountBalanceNtfn("acct", 1.25, true)
+				return ohmcjson.NewAccountBalanceNtfn("acct", 1.25, true)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"accountbalance","params":["acct",1.25,true],"id":null}`,
-			unmarshalled: &btcjson.AccountBalanceNtfn{
+			unmarshalled: &ohmcjson.AccountBalanceNtfn{
 				Account:   "acct",
 				Balance:   1.25,
 				Confirmed: true,
 			},
 		},
 		{
-			name: "btcdconnected",
+			name: "ohmcdconnected",
 			newNtfn: func() (interface{}, error) {
-				return btcjson.NewCmd("btcdconnected", true)
+				return ohmcjson.NewCmd("ohmcdconnected", true)
 			},
 			staticNtfn: func() interface{} {
-				return btcjson.NewBtcdConnectedNtfn(true)
+				return ohmcjson.NewohmcdConnectedNtfn(true)
 			},
-			marshalled: `{"jsonrpc":"1.0","method":"btcdconnected","params":[true],"id":null}`,
-			unmarshalled: &btcjson.BtcdConnectedNtfn{
+			marshalled: `{"jsonrpc":"1.0","method":"ohmcdconnected","params":[true],"id":null}`,
+			unmarshalled: &ohmcjson.ohmcdConnectedNtfn{
 				Connected: true,
 			},
 		},
 		{
 			name: "walletlockstate",
 			newNtfn: func() (interface{}, error) {
-				return btcjson.NewCmd("walletlockstate", true)
+				return ohmcjson.NewCmd("walletlockstate", true)
 			},
 			staticNtfn: func() interface{} {
-				return btcjson.NewWalletLockStateNtfn(true)
+				return ohmcjson.NewWalletLockStateNtfn(true)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"walletlockstate","params":[true],"id":null}`,
-			unmarshalled: &btcjson.WalletLockStateNtfn{
+			unmarshalled: &ohmcjson.WalletLockStateNtfn{
 				Locked: true,
 			},
 		},
 		{
 			name: "newtx",
 			newNtfn: func() (interface{}, error) {
-				return btcjson.NewCmd("newtx", "acct", `{"account":"acct","address":"1Address","category":"send","amount":1.5,"bip125-replaceable":"unknown","fee":0.0001,"confirmations":1,"trusted":true,"txid":"456","walletconflicts":[],"time":12345678,"timereceived":12345876,"vout":789,"otheraccount":"otheracct"}`)
+				return ohmcjson.NewCmd("newtx", "acct", `{"account":"acct","address":"1Address","category":"send","amount":1.5,"bip125-replaceable":"unknown","fee":0.0001,"confirmations":1,"trusted":true,"txid":"456","walletconflicts":[],"time":12345678,"timereceived":12345876,"vout":789,"otheraccount":"otheracct"}`)
 			},
 			staticNtfn: func() interface{} {
-				result := btcjson.ListTransactionsResult{
+				result := ohmcjson.ListTransactionsResult{
 					Abandoned:         false,
 					Account:           "acct",
 					Address:           "1Address",
 					BIP125Replaceable: "unknown",
 					Category:          "send",
 					Amount:            1.5,
-					Fee:               btcjson.Float64(0.0001),
+					Fee:               ohmcjson.Float64(0.0001),
 					Confirmations:     1,
 					TxID:              "456",
 					WalletConflicts:   []string{},
@@ -92,19 +92,19 @@ func TestWalletSvrWsNtfns(t *testing.T) {
 					Vout:              789,
 					OtherAccount:      "otheracct",
 				}
-				return btcjson.NewNewTxNtfn("acct", result)
+				return ohmcjson.NewNewTxNtfn("acct", result)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"newtx","params":["acct",{"abandoned":false,"account":"acct","address":"1Address","amount":1.5,"bip125-replaceable":"unknown","category":"send","confirmations":1,"fee":0.0001,"time":12345678,"timereceived":12345876,"trusted":true,"txid":"456","vout":789,"walletconflicts":[],"otheraccount":"otheracct"}],"id":null}`,
-			unmarshalled: &btcjson.NewTxNtfn{
+			unmarshalled: &ohmcjson.NewTxNtfn{
 				Account: "acct",
-				Details: btcjson.ListTransactionsResult{
+				Details: ohmcjson.ListTransactionsResult{
 					Abandoned:         false,
 					Account:           "acct",
 					Address:           "1Address",
 					BIP125Replaceable: "unknown",
 					Category:          "send",
 					Amount:            1.5,
-					Fee:               btcjson.Float64(0.0001),
+					Fee:               ohmcjson.Float64(0.0001),
 					Confirmations:     1,
 					TxID:              "456",
 					WalletConflicts:   []string{},
@@ -122,7 +122,7 @@ func TestWalletSvrWsNtfns(t *testing.T) {
 	for i, test := range tests {
 		// Marshal the notification as created by the new static
 		// creation function.  The ID is nil for notifications.
-		marshalled, err := btcjson.MarshalCmd(nil, test.staticNtfn())
+		marshalled, err := ohmcjson.MarshalCmd(nil, test.staticNtfn())
 		if err != nil {
 			t.Errorf("MarshalCmd #%d (%s) unexpected error: %v", i,
 				test.name, err)
@@ -147,7 +147,7 @@ func TestWalletSvrWsNtfns(t *testing.T) {
 		// Marshal the notification as created by the generic new
 		// notification creation function.    The ID is nil for
 		// notifications.
-		marshalled, err = btcjson.MarshalCmd(nil, cmd)
+		marshalled, err = ohmcjson.MarshalCmd(nil, cmd)
 		if err != nil {
 			t.Errorf("MarshalCmd #%d (%s) unexpected error: %v", i,
 				test.name, err)
@@ -161,7 +161,7 @@ func TestWalletSvrWsNtfns(t *testing.T) {
 			continue
 		}
 
-		var request btcjson.Request
+		var request ohmcjson.Request
 		if err := json.Unmarshal(marshalled, &request); err != nil {
 			t.Errorf("Test #%d (%s) unexpected error while "+
 				"unmarshalling JSON-RPC request: %v", i,
@@ -169,7 +169,7 @@ func TestWalletSvrWsNtfns(t *testing.T) {
 			continue
 		}
 
-		cmd, err = btcjson.UnmarshalCmd(&request)
+		cmd, err = ohmcjson.UnmarshalCmd(&request)
 		if err != nil {
 			t.Errorf("UnmarshalCmd #%d (%s) unexpected error: %v", i,
 				test.name, err)

@@ -1,8 +1,8 @@
-// Copyright (c) 2014 The btcsuite developers
+// Copyright (c) 2014 The ohmcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-package btcjson_test
+package ohmcjson_test
 
 import (
 	"bytes"
@@ -11,7 +11,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcjson"
+	"github.com/ohmcsuite/ohmcd/ohmcjson"
 )
 
 // TestWalletSvrWsCmds tests all of the wallet server websocket-specific
@@ -32,93 +32,93 @@ func TestWalletSvrWsCmds(t *testing.T) {
 		{
 			name: "createencryptedwallet",
 			newCmd: func() (interface{}, error) {
-				return btcjson.NewCmd("createencryptedwallet", "pass")
+				return ohmcjson.NewCmd("createencryptedwallet", "pass")
 			},
 			staticCmd: func() interface{} {
-				return btcjson.NewCreateEncryptedWalletCmd("pass")
+				return ohmcjson.NewCreateEncryptedWalletCmd("pass")
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"createencryptedwallet","params":["pass"],"id":1}`,
-			unmarshalled: &btcjson.CreateEncryptedWalletCmd{Passphrase: "pass"},
+			unmarshalled: &ohmcjson.CreateEncryptedWalletCmd{Passphrase: "pass"},
 		},
 		{
 			name: "exportwatchingwallet",
 			newCmd: func() (interface{}, error) {
-				return btcjson.NewCmd("exportwatchingwallet")
+				return ohmcjson.NewCmd("exportwatchingwallet")
 			},
 			staticCmd: func() interface{} {
-				return btcjson.NewExportWatchingWalletCmd(nil, nil)
+				return ohmcjson.NewExportWatchingWalletCmd(nil, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"exportwatchingwallet","params":[],"id":1}`,
-			unmarshalled: &btcjson.ExportWatchingWalletCmd{
+			unmarshalled: &ohmcjson.ExportWatchingWalletCmd{
 				Account:  nil,
-				Download: btcjson.Bool(false),
+				Download: ohmcjson.Bool(false),
 			},
 		},
 		{
 			name: "exportwatchingwallet optional1",
 			newCmd: func() (interface{}, error) {
-				return btcjson.NewCmd("exportwatchingwallet", "acct")
+				return ohmcjson.NewCmd("exportwatchingwallet", "acct")
 			},
 			staticCmd: func() interface{} {
-				return btcjson.NewExportWatchingWalletCmd(btcjson.String("acct"), nil)
+				return ohmcjson.NewExportWatchingWalletCmd(ohmcjson.String("acct"), nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"exportwatchingwallet","params":["acct"],"id":1}`,
-			unmarshalled: &btcjson.ExportWatchingWalletCmd{
-				Account:  btcjson.String("acct"),
-				Download: btcjson.Bool(false),
+			unmarshalled: &ohmcjson.ExportWatchingWalletCmd{
+				Account:  ohmcjson.String("acct"),
+				Download: ohmcjson.Bool(false),
 			},
 		},
 		{
 			name: "exportwatchingwallet optional2",
 			newCmd: func() (interface{}, error) {
-				return btcjson.NewCmd("exportwatchingwallet", "acct", true)
+				return ohmcjson.NewCmd("exportwatchingwallet", "acct", true)
 			},
 			staticCmd: func() interface{} {
-				return btcjson.NewExportWatchingWalletCmd(btcjson.String("acct"),
-					btcjson.Bool(true))
+				return ohmcjson.NewExportWatchingWalletCmd(ohmcjson.String("acct"),
+					ohmcjson.Bool(true))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"exportwatchingwallet","params":["acct",true],"id":1}`,
-			unmarshalled: &btcjson.ExportWatchingWalletCmd{
-				Account:  btcjson.String("acct"),
-				Download: btcjson.Bool(true),
+			unmarshalled: &ohmcjson.ExportWatchingWalletCmd{
+				Account:  ohmcjson.String("acct"),
+				Download: ohmcjson.Bool(true),
 			},
 		},
 		{
 			name: "getunconfirmedbalance",
 			newCmd: func() (interface{}, error) {
-				return btcjson.NewCmd("getunconfirmedbalance")
+				return ohmcjson.NewCmd("getunconfirmedbalance")
 			},
 			staticCmd: func() interface{} {
-				return btcjson.NewGetUnconfirmedBalanceCmd(nil)
+				return ohmcjson.NewGetUnconfirmedBalanceCmd(nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getunconfirmedbalance","params":[],"id":1}`,
-			unmarshalled: &btcjson.GetUnconfirmedBalanceCmd{
+			unmarshalled: &ohmcjson.GetUnconfirmedBalanceCmd{
 				Account: nil,
 			},
 		},
 		{
 			name: "getunconfirmedbalance optional1",
 			newCmd: func() (interface{}, error) {
-				return btcjson.NewCmd("getunconfirmedbalance", "acct")
+				return ohmcjson.NewCmd("getunconfirmedbalance", "acct")
 			},
 			staticCmd: func() interface{} {
-				return btcjson.NewGetUnconfirmedBalanceCmd(btcjson.String("acct"))
+				return ohmcjson.NewGetUnconfirmedBalanceCmd(ohmcjson.String("acct"))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"getunconfirmedbalance","params":["acct"],"id":1}`,
-			unmarshalled: &btcjson.GetUnconfirmedBalanceCmd{
-				Account: btcjson.String("acct"),
+			unmarshalled: &ohmcjson.GetUnconfirmedBalanceCmd{
+				Account: ohmcjson.String("acct"),
 			},
 		},
 		{
 			name: "listaddresstransactions",
 			newCmd: func() (interface{}, error) {
-				return btcjson.NewCmd("listaddresstransactions", `["1Address"]`)
+				return ohmcjson.NewCmd("listaddresstransactions", `["1Address"]`)
 			},
 			staticCmd: func() interface{} {
-				return btcjson.NewListAddressTransactionsCmd([]string{"1Address"}, nil)
+				return ohmcjson.NewListAddressTransactionsCmd([]string{"1Address"}, nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listaddresstransactions","params":[["1Address"]],"id":1}`,
-			unmarshalled: &btcjson.ListAddressTransactionsCmd{
+			unmarshalled: &ohmcjson.ListAddressTransactionsCmd{
 				Addresses: []string{"1Address"},
 				Account:   nil,
 			},
@@ -126,54 +126,54 @@ func TestWalletSvrWsCmds(t *testing.T) {
 		{
 			name: "listaddresstransactions optional1",
 			newCmd: func() (interface{}, error) {
-				return btcjson.NewCmd("listaddresstransactions", `["1Address"]`, "acct")
+				return ohmcjson.NewCmd("listaddresstransactions", `["1Address"]`, "acct")
 			},
 			staticCmd: func() interface{} {
-				return btcjson.NewListAddressTransactionsCmd([]string{"1Address"},
-					btcjson.String("acct"))
+				return ohmcjson.NewListAddressTransactionsCmd([]string{"1Address"},
+					ohmcjson.String("acct"))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listaddresstransactions","params":[["1Address"],"acct"],"id":1}`,
-			unmarshalled: &btcjson.ListAddressTransactionsCmd{
+			unmarshalled: &ohmcjson.ListAddressTransactionsCmd{
 				Addresses: []string{"1Address"},
-				Account:   btcjson.String("acct"),
+				Account:   ohmcjson.String("acct"),
 			},
 		},
 		{
 			name: "listalltransactions",
 			newCmd: func() (interface{}, error) {
-				return btcjson.NewCmd("listalltransactions")
+				return ohmcjson.NewCmd("listalltransactions")
 			},
 			staticCmd: func() interface{} {
-				return btcjson.NewListAllTransactionsCmd(nil)
+				return ohmcjson.NewListAllTransactionsCmd(nil)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listalltransactions","params":[],"id":1}`,
-			unmarshalled: &btcjson.ListAllTransactionsCmd{
+			unmarshalled: &ohmcjson.ListAllTransactionsCmd{
 				Account: nil,
 			},
 		},
 		{
 			name: "listalltransactions optional",
 			newCmd: func() (interface{}, error) {
-				return btcjson.NewCmd("listalltransactions", "acct")
+				return ohmcjson.NewCmd("listalltransactions", "acct")
 			},
 			staticCmd: func() interface{} {
-				return btcjson.NewListAllTransactionsCmd(btcjson.String("acct"))
+				return ohmcjson.NewListAllTransactionsCmd(ohmcjson.String("acct"))
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"listalltransactions","params":["acct"],"id":1}`,
-			unmarshalled: &btcjson.ListAllTransactionsCmd{
-				Account: btcjson.String("acct"),
+			unmarshalled: &ohmcjson.ListAllTransactionsCmd{
+				Account: ohmcjson.String("acct"),
 			},
 		},
 		{
 			name: "recoveraddresses",
 			newCmd: func() (interface{}, error) {
-				return btcjson.NewCmd("recoveraddresses", "acct", 10)
+				return ohmcjson.NewCmd("recoveraddresses", "acct", 10)
 			},
 			staticCmd: func() interface{} {
-				return btcjson.NewRecoverAddressesCmd("acct", 10)
+				return ohmcjson.NewRecoverAddressesCmd("acct", 10)
 			},
 			marshalled: `{"jsonrpc":"1.0","method":"recoveraddresses","params":["acct",10],"id":1}`,
-			unmarshalled: &btcjson.RecoverAddressesCmd{
+			unmarshalled: &ohmcjson.RecoverAddressesCmd{
 				Account: "acct",
 				N:       10,
 			},
@@ -181,13 +181,13 @@ func TestWalletSvrWsCmds(t *testing.T) {
 		{
 			name: "walletislocked",
 			newCmd: func() (interface{}, error) {
-				return btcjson.NewCmd("walletislocked")
+				return ohmcjson.NewCmd("walletislocked")
 			},
 			staticCmd: func() interface{} {
-				return btcjson.NewWalletIsLockedCmd()
+				return ohmcjson.NewWalletIsLockedCmd()
 			},
 			marshalled:   `{"jsonrpc":"1.0","method":"walletislocked","params":[],"id":1}`,
-			unmarshalled: &btcjson.WalletIsLockedCmd{},
+			unmarshalled: &ohmcjson.WalletIsLockedCmd{},
 		},
 	}
 
@@ -195,7 +195,7 @@ func TestWalletSvrWsCmds(t *testing.T) {
 	for i, test := range tests {
 		// Marshal the command as created by the new static command
 		// creation function.
-		marshalled, err := btcjson.MarshalCmd(testID, test.staticCmd())
+		marshalled, err := ohmcjson.MarshalCmd(testID, test.staticCmd())
 		if err != nil {
 			t.Errorf("MarshalCmd #%d (%s) unexpected error: %v", i,
 				test.name, err)
@@ -219,7 +219,7 @@ func TestWalletSvrWsCmds(t *testing.T) {
 
 		// Marshal the command as created by the generic new command
 		// creation function.
-		marshalled, err = btcjson.MarshalCmd(testID, cmd)
+		marshalled, err = ohmcjson.MarshalCmd(testID, cmd)
 		if err != nil {
 			t.Errorf("MarshalCmd #%d (%s) unexpected error: %v", i,
 				test.name, err)
@@ -233,7 +233,7 @@ func TestWalletSvrWsCmds(t *testing.T) {
 			continue
 		}
 
-		var request btcjson.Request
+		var request ohmcjson.Request
 		if err := json.Unmarshal(marshalled, &request); err != nil {
 			t.Errorf("Test #%d (%s) unexpected error while "+
 				"unmarshalling JSON-RPC request: %v", i,
@@ -241,7 +241,7 @@ func TestWalletSvrWsCmds(t *testing.T) {
 			continue
 		}
 
-		cmd, err = btcjson.UnmarshalCmd(&request)
+		cmd, err = ohmcjson.UnmarshalCmd(&request)
 		if err != nil {
 			t.Errorf("UnmarshalCmd #%d (%s) unexpected error: %v", i,
 				test.name, err)

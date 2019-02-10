@@ -1,15 +1,15 @@
-// Copyright (c) 2014 The btcsuite developers
+// Copyright (c) 2014 The ohmcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-package btcjson_test
+package ohmcjson_test
 
 import (
 	"reflect"
 	"sort"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcjson"
+	"github.com/ohmcsuite/ohmcd/ohmcjson"
 )
 
 // TestUsageFlagStringer tests the stringized output for the UsageFlag type.
@@ -17,22 +17,22 @@ func TestUsageFlagStringer(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		in   btcjson.UsageFlag
+		in   ohmcjson.UsageFlag
 		want string
 	}{
 		{0, "0x0"},
-		{btcjson.UFWalletOnly, "UFWalletOnly"},
-		{btcjson.UFWebsocketOnly, "UFWebsocketOnly"},
-		{btcjson.UFNotification, "UFNotification"},
-		{btcjson.UFWalletOnly | btcjson.UFWebsocketOnly,
+		{ohmcjson.UFWalletOnly, "UFWalletOnly"},
+		{ohmcjson.UFWebsocketOnly, "UFWebsocketOnly"},
+		{ohmcjson.UFNotification, "UFNotification"},
+		{ohmcjson.UFWalletOnly | ohmcjson.UFWebsocketOnly,
 			"UFWalletOnly|UFWebsocketOnly"},
-		{btcjson.UFWalletOnly | btcjson.UFWebsocketOnly | (1 << 31),
+		{ohmcjson.UFWalletOnly | ohmcjson.UFWebsocketOnly | (1 << 31),
 			"UFWalletOnly|UFWebsocketOnly|0x80000000"},
 	}
 
 	// Detect additional usage flags that don't have the stringer added.
 	numUsageFlags := 0
-	highestUsageFlagBit := btcjson.TstHighestUsageFlagBit
+	highestUsageFlagBit := ohmcjson.TstHighestUsageFlagBit
 	for highestUsageFlagBit > 1 {
 		numUsageFlags++
 		highestUsageFlagBit >>= 1
@@ -62,8 +62,8 @@ func TestRegisterCmdErrors(t *testing.T) {
 		name    string
 		method  string
 		cmdFunc func() interface{}
-		flags   btcjson.UsageFlag
-		err     btcjson.Error
+		flags   ohmcjson.UsageFlag
+		err     ohmcjson.Error
 	}{
 		{
 			name:   "duplicate method",
@@ -71,7 +71,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 			cmdFunc: func() interface{} {
 				return struct{}{}
 			},
-			err: btcjson.Error{ErrorCode: btcjson.ErrDuplicateMethod},
+			err: ohmcjson.Error{ErrorCode: ohmcjson.ErrDuplicateMethod},
 		},
 		{
 			name:   "invalid usage flags",
@@ -79,8 +79,8 @@ func TestRegisterCmdErrors(t *testing.T) {
 			cmdFunc: func() interface{} {
 				return 0
 			},
-			flags: btcjson.TstHighestUsageFlagBit,
-			err:   btcjson.Error{ErrorCode: btcjson.ErrInvalidUsageFlags},
+			flags: ohmcjson.TstHighestUsageFlagBit,
+			err:   ohmcjson.Error{ErrorCode: ohmcjson.ErrInvalidUsageFlags},
 		},
 		{
 			name:   "invalid type",
@@ -88,7 +88,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 			cmdFunc: func() interface{} {
 				return 0
 			},
-			err: btcjson.Error{ErrorCode: btcjson.ErrInvalidType},
+			err: ohmcjson.Error{ErrorCode: ohmcjson.ErrInvalidType},
 		},
 		{
 			name:   "invalid type 2",
@@ -96,7 +96,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 			cmdFunc: func() interface{} {
 				return &[]string{}
 			},
-			err: btcjson.Error{ErrorCode: btcjson.ErrInvalidType},
+			err: ohmcjson.Error{ErrorCode: ohmcjson.ErrInvalidType},
 		},
 		{
 			name:   "embedded field",
@@ -105,7 +105,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 				type test struct{ int }
 				return (*test)(nil)
 			},
-			err: btcjson.Error{ErrorCode: btcjson.ErrEmbeddedType},
+			err: ohmcjson.Error{ErrorCode: ohmcjson.ErrEmbeddedType},
 		},
 		{
 			name:   "unexported field",
@@ -114,7 +114,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 				type test struct{ a int }
 				return (*test)(nil)
 			},
-			err: btcjson.Error{ErrorCode: btcjson.ErrUnexportedField},
+			err: ohmcjson.Error{ErrorCode: ohmcjson.ErrUnexportedField},
 		},
 		{
 			name:   "unsupported field type 1",
@@ -123,7 +123,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 				type test struct{ A **int }
 				return (*test)(nil)
 			},
-			err: btcjson.Error{ErrorCode: btcjson.ErrUnsupportedFieldType},
+			err: ohmcjson.Error{ErrorCode: ohmcjson.ErrUnsupportedFieldType},
 		},
 		{
 			name:   "unsupported field type 2",
@@ -132,7 +132,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 				type test struct{ A chan int }
 				return (*test)(nil)
 			},
-			err: btcjson.Error{ErrorCode: btcjson.ErrUnsupportedFieldType},
+			err: ohmcjson.Error{ErrorCode: ohmcjson.ErrUnsupportedFieldType},
 		},
 		{
 			name:   "unsupported field type 3",
@@ -141,7 +141,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 				type test struct{ A complex64 }
 				return (*test)(nil)
 			},
-			err: btcjson.Error{ErrorCode: btcjson.ErrUnsupportedFieldType},
+			err: ohmcjson.Error{ErrorCode: ohmcjson.ErrUnsupportedFieldType},
 		},
 		{
 			name:   "unsupported field type 4",
@@ -150,7 +150,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 				type test struct{ A complex128 }
 				return (*test)(nil)
 			},
-			err: btcjson.Error{ErrorCode: btcjson.ErrUnsupportedFieldType},
+			err: ohmcjson.Error{ErrorCode: ohmcjson.ErrUnsupportedFieldType},
 		},
 		{
 			name:   "unsupported field type 5",
@@ -159,7 +159,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 				type test struct{ A func() }
 				return (*test)(nil)
 			},
-			err: btcjson.Error{ErrorCode: btcjson.ErrUnsupportedFieldType},
+			err: ohmcjson.Error{ErrorCode: ohmcjson.ErrUnsupportedFieldType},
 		},
 		{
 			name:   "unsupported field type 6",
@@ -168,7 +168,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 				type test struct{ A interface{} }
 				return (*test)(nil)
 			},
-			err: btcjson.Error{ErrorCode: btcjson.ErrUnsupportedFieldType},
+			err: ohmcjson.Error{ErrorCode: ohmcjson.ErrUnsupportedFieldType},
 		},
 		{
 			name:   "required after optional",
@@ -180,7 +180,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 				}
 				return (*test)(nil)
 			},
-			err: btcjson.Error{ErrorCode: btcjson.ErrNonOptionalField},
+			err: ohmcjson.Error{ErrorCode: ohmcjson.ErrNonOptionalField},
 		},
 		{
 			name:   "non-optional with default",
@@ -191,7 +191,7 @@ func TestRegisterCmdErrors(t *testing.T) {
 				}
 				return (*test)(nil)
 			},
-			err: btcjson.Error{ErrorCode: btcjson.ErrNonOptionalDefault},
+			err: ohmcjson.Error{ErrorCode: ohmcjson.ErrNonOptionalDefault},
 		},
 		{
 			name:   "mismatched default",
@@ -202,20 +202,20 @@ func TestRegisterCmdErrors(t *testing.T) {
 				}
 				return (*test)(nil)
 			},
-			err: btcjson.Error{ErrorCode: btcjson.ErrMismatchedDefault},
+			err: ohmcjson.Error{ErrorCode: ohmcjson.ErrMismatchedDefault},
 		},
 	}
 
 	t.Logf("Running %d tests", len(tests))
 	for i, test := range tests {
-		err := btcjson.RegisterCmd(test.method, test.cmdFunc(),
+		err := ohmcjson.RegisterCmd(test.method, test.cmdFunc(),
 			test.flags)
 		if reflect.TypeOf(err) != reflect.TypeOf(test.err) {
 			t.Errorf("Test #%d (%s) wrong error - got %T, "+
 				"want %T", i, test.name, err, test.err)
 			continue
 		}
-		gotErrorCode := err.(btcjson.Error).ErrorCode
+		gotErrorCode := err.(ohmcjson.Error).ErrorCode
 		if gotErrorCode != test.err.ErrorCode {
 			t.Errorf("Test #%d (%s) mismatched error code - got "+
 				"%v, want %v", i, test.name, gotErrorCode,
@@ -239,7 +239,7 @@ func TestMustRegisterCmdPanic(t *testing.T) {
 	}()
 
 	// Intentionally try to register an invalid type to force a panic.
-	btcjson.MustRegisterCmd("panicme", 0, 0)
+	ohmcjson.MustRegisterCmd("panicme", 0, 0)
 }
 
 // TestRegisteredCmdMethods tests the RegisteredCmdMethods function ensure it
@@ -248,7 +248,7 @@ func TestRegisteredCmdMethods(t *testing.T) {
 	t.Parallel()
 
 	// Ensure the registered methods are returned.
-	methods := btcjson.RegisteredCmdMethods()
+	methods := ohmcjson.RegisteredCmdMethods()
 	if len(methods) == 0 {
 		t.Fatal("RegisteredCmdMethods: no methods")
 	}

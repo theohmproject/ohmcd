@@ -1,10 +1,10 @@
 // Copyright 2010 The Go Authors. All rights reserved.
 // Copyright 2011 ThePiachu. All rights reserved.
-// Copyright 2013-2014 The btcsuite developers
+// Copyright 2013-2014 The ohmcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-package btcec
+package ohmcec
 
 // References:
 //   [SECG]: Recommended Elliptic Curve Domain Parameters

@@ -1,8 +1,8 @@
-// Copyright (c) 2013-2017 The btcsuite developers
+// Copyright (c) 2013-2017 The ohmcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-package btcec
+package ohmcec
 
 import (
 	"bytes"
@@ -531,7 +531,7 @@ func TestSignCompact(t *testing.T) {
 }
 
 // recoveryTests assert basic tests for public key recovery from signatures.
-// The cases are borrowed from github.com/fjl/btcec-issue.
+// The cases are borrowed from github.com/fjl/ohmcec-issue.
 var recoveryTests = []struct {
 	msg string
 	sig string
@@ -594,7 +594,7 @@ func TestRecoverCompact(t *testing.T) {
 func TestRFC6979(t *testing.T) {
 	// Test vectors matching Trezor and CoreBitcoin implementations.
 	// - https://github.com/trezor/trezor-crypto/blob/9fea8f8ab377dc514e40c6fd1f7c89a74c1d8dc6/tests.c#L432-L453
-	// - https://github.com/oleganza/CoreBitcoin/blob/e93dd71207861b5bf044415db5fa72405e7d8fbc/CoreBitcoin/BTCKey%2BTests.m#L23-L49
+	// - https://github.com/oleganza/CoreBitcoin/blob/e93dd71207861b5bf044415db5fa72405e7d8fbc/CoreBitcoin/ohmcKey%2BTests.m#L23-L49
 	tests := []struct {
 		key       string
 		msg       string

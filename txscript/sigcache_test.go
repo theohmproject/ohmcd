@@ -1,4 +1,4 @@
-// Copyright (c) 2015-2016 The btcsuite developers
+// Copyright (c) 2015-2016 The ohmcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -8,15 +8,15 @@ import (
 	"crypto/rand"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcec"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/ohmcsuite/ohmcd/ohmcec"
+	"github.com/ohmcsuite/ohmcd/chaincfg/chainhash"
 )
 
 // genRandomSig returns a random message, a signature of the message under the
 // public key and the public key. This function is used to generate randomized
 // test data.
-func genRandomSig() (*chainhash.Hash, *btcec.Signature, *btcec.PublicKey, error) {
-	privKey, err := btcec.NewPrivateKey(btcec.S256())
+func genRandomSig() (*chainhash.Hash, *ohmcec.Signature, *ohmcec.PublicKey, error) {
+	privKey, err := ohmcec.NewPrivateKey(ohmcec.S256())
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -49,8 +49,8 @@ func TestSigCacheAddExists(t *testing.T) {
 	sigCache.Add(*msg1, sig1, key1)
 
 	// The previously added triplet should now be found within the sigcache.
-	sig1Copy, _ := btcec.ParseSignature(sig1.Serialize(), btcec.S256())
-	key1Copy, _ := btcec.ParsePubKey(key1.SerializeCompressed(), btcec.S256())
+	sig1Copy, _ := ohmcec.ParseSignature(sig1.Serialize(), ohmcec.S256())
+	key1Copy, _ := ohmcec.ParsePubKey(key1.SerializeCompressed(), ohmcec.S256())
 	if !sigCache.Exists(*msg1, sig1Copy, key1Copy) {
 		t.Errorf("previously added item not found in signature cache")
 	}
@@ -73,8 +73,8 @@ func TestSigCacheAddEvictEntry(t *testing.T) {
 
 		sigCache.Add(*msg, sig, key)
 
-		sigCopy, _ := btcec.ParseSignature(sig.Serialize(), btcec.S256())
-		keyCopy, _ := btcec.ParsePubKey(key.SerializeCompressed(), btcec.S256())
+		sigCopy, _ := ohmcec.ParseSignature(sig.Serialize(), ohmcec.S256())
+		keyCopy, _ := ohmcec.ParsePubKey(key.SerializeCompressed(), ohmcec.S256())
 		if !sigCache.Exists(*msg, sigCopy, keyCopy) {
 			t.Errorf("previously added item not found in signature" +
 				"cache")
@@ -102,8 +102,8 @@ func TestSigCacheAddEvictEntry(t *testing.T) {
 	}
 
 	// The entry added above should be found within the sigcache.
-	sigNewCopy, _ := btcec.ParseSignature(sigNew.Serialize(), btcec.S256())
-	keyNewCopy, _ := btcec.ParsePubKey(keyNew.SerializeCompressed(), btcec.S256())
+	sigNewCopy, _ := ohmcec.ParseSignature(sigNew.Serialize(), ohmcec.S256())
+	keyNewCopy, _ := ohmcec.ParsePubKey(keyNew.SerializeCompressed(), ohmcec.S256())
 	if !sigCache.Exists(*msgNew, sigNewCopy, keyNewCopy) {
 		t.Fatalf("previously added item not found in signature cache")
 	}
@@ -125,8 +125,8 @@ func TestSigCacheAddMaxEntriesZeroOrNegative(t *testing.T) {
 	sigCache.Add(*msg1, sig1, key1)
 
 	// The generated triplet should not be found.
-	sig1Copy, _ := btcec.ParseSignature(sig1.Serialize(), btcec.S256())
-	key1Copy, _ := btcec.ParsePubKey(key1.SerializeCompressed(), btcec.S256())
+	sig1Copy, _ := ohmcec.ParseSignature(sig1.Serialize(), ohmcec.S256())
+	key1Copy, _ := ohmcec.ParsePubKey(key1.SerializeCompressed(), ohmcec.S256())
 	if sigCache.Exists(*msg1, sig1Copy, key1Copy) {
 		t.Errorf("previously added signature found in sigcache, but" +
 			"shouldn't have been")

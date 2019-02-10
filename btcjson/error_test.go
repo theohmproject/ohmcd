@@ -1,13 +1,13 @@
-// Copyright (c) 2014 The btcsuite developers
+// Copyright (c) 2014 The ohmcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-package btcjson_test
+package ohmcjson_test
 
 import (
 	"testing"
 
-	"github.com/btcsuite/btcd/btcjson"
+	"github.com/ohmcsuite/ohmcd/ohmcjson"
 )
 
 // TestErrorCodeStringer tests the stringized output for the ErrorCode type.
@@ -15,26 +15,26 @@ func TestErrorCodeStringer(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		in   btcjson.ErrorCode
+		in   ohmcjson.ErrorCode
 		want string
 	}{
-		{btcjson.ErrDuplicateMethod, "ErrDuplicateMethod"},
-		{btcjson.ErrInvalidUsageFlags, "ErrInvalidUsageFlags"},
-		{btcjson.ErrInvalidType, "ErrInvalidType"},
-		{btcjson.ErrEmbeddedType, "ErrEmbeddedType"},
-		{btcjson.ErrUnexportedField, "ErrUnexportedField"},
-		{btcjson.ErrUnsupportedFieldType, "ErrUnsupportedFieldType"},
-		{btcjson.ErrNonOptionalField, "ErrNonOptionalField"},
-		{btcjson.ErrNonOptionalDefault, "ErrNonOptionalDefault"},
-		{btcjson.ErrMismatchedDefault, "ErrMismatchedDefault"},
-		{btcjson.ErrUnregisteredMethod, "ErrUnregisteredMethod"},
-		{btcjson.ErrNumParams, "ErrNumParams"},
-		{btcjson.ErrMissingDescription, "ErrMissingDescription"},
+		{ohmcjson.ErrDuplicateMethod, "ErrDuplicateMethod"},
+		{ohmcjson.ErrInvalidUsageFlags, "ErrInvalidUsageFlags"},
+		{ohmcjson.ErrInvalidType, "ErrInvalidType"},
+		{ohmcjson.ErrEmbeddedType, "ErrEmbeddedType"},
+		{ohmcjson.ErrUnexportedField, "ErrUnexportedField"},
+		{ohmcjson.ErrUnsupportedFieldType, "ErrUnsupportedFieldType"},
+		{ohmcjson.ErrNonOptionalField, "ErrNonOptionalField"},
+		{ohmcjson.ErrNonOptionalDefault, "ErrNonOptionalDefault"},
+		{ohmcjson.ErrMismatchedDefault, "ErrMismatchedDefault"},
+		{ohmcjson.ErrUnregisteredMethod, "ErrUnregisteredMethod"},
+		{ohmcjson.ErrNumParams, "ErrNumParams"},
+		{ohmcjson.ErrMissingDescription, "ErrMissingDescription"},
 		{0xffff, "Unknown ErrorCode (65535)"},
 	}
 
 	// Detect additional error codes that don't have the stringer added.
-	if len(tests)-1 != int(btcjson.TstNumErrorCodes) {
+	if len(tests)-1 != int(ohmcjson.TstNumErrorCodes) {
 		t.Errorf("It appears an error code was added without adding an " +
 			"associated stringer test")
 	}
@@ -55,15 +55,15 @@ func TestError(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		in   btcjson.Error
+		in   ohmcjson.Error
 		want string
 	}{
 		{
-			btcjson.Error{Description: "some error"},
+			ohmcjson.Error{Description: "some error"},
 			"some error",
 		},
 		{
-			btcjson.Error{Description: "human-readable error"},
+			ohmcjson.Error{Description: "human-readable error"},
 			"human-readable error",
 		},
 	}
