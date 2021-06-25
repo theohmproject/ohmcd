@@ -145,8 +145,8 @@ func btcdMain(serverChan chan<- *server) error {
 	}
 
 	// Create server and start it.
-	server, err := newServer(cfg.Listeners, db, activeNetParams.Params,
-		interrupt)
+	server, err := newServer(cfg.Listeners, cfg.AgentBlacklist,
+		cfg.AgentWhitelist, db, activeNetParams.Params, interrupt)
 	if err != nil {
 		// TODO: this logging could do with some beautifying.
 		btcdLog.Errorf("Unable to start server on %v: %v",
@@ -297,9 +297,6 @@ func loadBlockDB() (database.DB, error) {
 }
 
 func main() {
-	// Use all processor cores.
-	runtime.GOMAXPROCS(runtime.NumCPU())
-
 	// Block and transaction processing can cause bursty allocations.  This
 	// limits the garbage collector from excessively overallocating during
 	// bursts.  This value was arrived at with the help of profiling live
