@@ -3,6 +3,7 @@
 // license that can be found in the LICENSE file.
 
 // This file is ignored during the regular tests due to the following build tag.
+//go:build rpctest
 // +build rpctest
 
 package integration
@@ -14,14 +15,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/btcsuite/btcd/address/v2"
 	"github.com/btcsuite/btcd/blockchain"
-	"github.com/btcsuite/btcd/btcec"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
 	"github.com/btcsuite/btcd/integration/rpctest"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 const (
@@ -35,14 +37,14 @@ func makeTestOutput(r *rpctest.Harness, t *testing.T,
 
 	// Create a fresh key, then send some coins to an address spendable by
 	// that key.
-	key, err := btcec.NewPrivateKey(btcec.S256())
+	key, err := btcec.NewPrivateKey()
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	// Using the key created above, generate a pkScript which it's able to
 	// spend.
-	a, err := btcutil.NewAddressPubKey(key.PubKey().SerializeCompressed(), r.ActiveNet)
+	a, err := address.NewAddressPubKey(key.PubKey().SerializeCompressed(), r.ActiveNet)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -57,14 +59,14 @@ func makeTestOutput(r *rpctest.Harness, t *testing.T,
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	txHash, err := r.Node.SendRawTransaction(fundTx, true)
+	txHash, err := r.Client.SendRawTransaction(fundTx, true)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	// The transaction created above should be included within the next
 	// generated block.
-	blockHash, err := r.Node.Generate(1)
+	blockHash, err := r.Client.Generate(1)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -94,22 +96,23 @@ func makeTestOutput(r *rpctest.Harness, t *testing.T,
 // them.
 //
 // Overview:
-//  - Pre soft-fork:
-//    - Transactions with non-final lock-times from the PoV of MTP should be
-//      rejected from the mempool.
-//    - Transactions within non-final MTP based lock-times should be accepted
-//      in valid blocks.
 //
-//  - Post soft-fork:
-//    - Transactions with non-final lock-times from the PoV of MTP should be
-//      rejected from the mempool and when found within otherwise valid blocks.
-//    - Transactions with final lock-times from the PoV of MTP should be
-//      accepted to the mempool and mined in future block.
+// - Pre soft-fork:
+//  1. Transactions with non-final lock-times from the PoV of MTP should be
+//     rejected from the mempool.
+//  2. Transactions within non-final MTP based lock-times should be accepted
+//     in valid blocks.
+//
+// - Post soft-fork:
+//  1. Transactions with non-final lock-times from the PoV of MTP should be
+//     rejected from the mempool and when found within otherwise valid blocks.
+//  2. Transactions with final lock-times from the PoV of MTP should be
+//     accepted to the mempool and mined in future block.
 func TestBIP0113Activation(t *testing.T) {
 	t.Parallel()
 
 	btcdCfg := []string{"--rejectnonstd"}
-	r, err := rpctest.New(&chaincfg.SimNetParams, nil, btcdCfg)
+	r, err := rpctest.New(&chaincfg.SimNetParams, nil, btcdCfg, "")
 	if err != nil {
 		t.Fatal("unable to create primary harness: ", err)
 	}
@@ -151,7 +154,7 @@ func TestBIP0113Activation(t *testing.T) {
 
 	// We set the lock-time of the transaction to just one minute after the
 	// current MTP of the chain.
-	chainInfo, err := r.Node.GetBlockChainInfo()
+	chainInfo, err := r.Client.GetBlockChainInfo()
 	if err != nil {
 		t.Fatalf("unable to query for chain info: %v", err)
 	}
@@ -167,7 +170,7 @@ func TestBIP0113Activation(t *testing.T) {
 	// This transaction should be rejected from the mempool as using MTP
 	// for transactions finality is now a policy rule. Additionally, the
 	// exact error should be the rejection of a non-final transaction.
-	_, err = r.Node.SendRawTransaction(tx, true)
+	_, err = r.Client.SendRawTransaction(tx, true)
 	if err == nil {
 		t.Fatalf("transaction accepted, but should be non-final")
 	} else if !strings.Contains(err.Error(), "not finalized") {
@@ -201,7 +204,7 @@ func TestBIP0113Activation(t *testing.T) {
 	// height 299. The getblockchaininfo call checks the state for the
 	// block AFTER the current height.
 	numBlocks := (r.ActiveNet.MinerConfirmationWindow * 2) - 4
-	if _, err := r.Node.Generate(numBlocks); err != nil {
+	if _, err := r.Client.Generate(numBlocks); err != nil {
 		t.Fatalf("unable to generate blocks: %v", err)
 	}
 
@@ -220,7 +223,7 @@ func TestBIP0113Activation(t *testing.T) {
 	// rejected.
 	timeLockDeltas := []int64{-1, 0, 1}
 	for _, timeLockDelta := range timeLockDeltas {
-		chainInfo, err = r.Node.GetBlockChainInfo()
+		chainInfo, err = r.Client.GetBlockChainInfo()
 		if err != nil {
 			t.Fatalf("unable to query for chain info: %v", err)
 		}
@@ -257,7 +260,7 @@ func TestBIP0113Activation(t *testing.T) {
 		// accepted as it has a lock-time of one
 		// second _before_ the current MTP.
 
-		_, err = r.Node.SendRawTransaction(tx, true)
+		_, err = r.Client.SendRawTransaction(tx, true)
 		if err == nil && timeLockDelta >= 0 {
 			t.Fatal("transaction was accepted into the mempool " +
 				"but should be rejected!")
@@ -301,7 +304,7 @@ func createCSVOutput(r *rpctest.Harness, t *testing.T,
 
 	// Using the script generated above, create a P2SH output which will be
 	// accepted into the mempool.
-	p2shAddr, err := btcutil.NewAddressScriptHash(csvScript, r.ActiveNet)
+	p2shAddr, err := address.NewAddressScriptHash(csvScript, r.ActiveNet)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -366,7 +369,7 @@ func spendCSVOutput(redeemScript []byte, csvUTXO *wire.OutPoint,
 func assertTxInBlock(r *rpctest.Harness, t *testing.T, blockHash *chainhash.Hash,
 	txid *chainhash.Hash) {
 
-	block, err := r.Node.GetBlock(blockHash)
+	block, err := r.Client.GetBlock(blockHash)
 	if err != nil {
 		t.Fatalf("unable to get block: %v", err)
 	}
@@ -390,13 +393,14 @@ func assertTxInBlock(r *rpctest.Harness, t *testing.T, blockHash *chainhash.Hash
 // 112 and BIP 68 rule-set after the activation of the CSV-package soft-fork.
 //
 // Overview:
-//  - Pre soft-fork:
-//    - A transaction spending a CSV output validly should be rejected from the
-//    mempool, but accepted in a valid generated block including the
-//    transaction.
-//  - Post soft-fork:
-//    - See the cases exercised within the table driven tests towards the end
-//    of this test.
+// - Pre soft-fork:
+//  1. A transaction spending a CSV output validly should be rejected from the
+//     mempool, but accepted in a valid generated block including the
+//     transaction.
+//
+// - Post soft-fork:
+//  1. See the cases exercised within the table driven tests towards the end
+//     of this test.
 func TestBIP0068AndBIP0112Activation(t *testing.T) {
 	t.Parallel()
 
@@ -405,7 +409,7 @@ func TestBIP0068AndBIP0112Activation(t *testing.T) {
 	// relative lock times.
 
 	btcdCfg := []string{"--rejectnonstd"}
-	r, err := rpctest.New(&chaincfg.SimNetParams, nil, btcdCfg)
+	r, err := rpctest.New(&chaincfg.SimNetParams, nil, btcdCfg, "")
 	if err != nil {
 		t.Fatal("unable to create primary harness: ", err)
 	}
@@ -449,10 +453,10 @@ func TestBIP0068AndBIP0112Activation(t *testing.T) {
 
 		// As the transaction is p2sh it should be accepted into the
 		// mempool and found within the next generated block.
-		if _, err := r.Node.SendRawTransaction(tx, true); err != nil {
+		if _, err := r.Client.SendRawTransaction(tx, true); err != nil {
 			t.Fatalf("unable to broadcast tx: %v", err)
 		}
-		blocks, err := r.Node.Generate(1)
+		blocks, err := r.Client.Generate(1)
 		if err != nil {
 			t.Fatalf("unable to generate blocks: %v", err)
 		}
@@ -469,7 +473,7 @@ func TestBIP0068AndBIP0112Activation(t *testing.T) {
 
 		// This transaction should be rejected from the mempool since
 		// CSV validation is already mempool policy pre-fork.
-		_, err = r.Node.SendRawTransaction(spendingTx, true)
+		_, err = r.Client.SendRawTransaction(spendingTx, true)
 		if err == nil {
 			t.Fatalf("transaction should have been rejected, but was " +
 				"instead accepted")
@@ -496,7 +500,7 @@ func TestBIP0068AndBIP0112Activation(t *testing.T) {
 	// height 299. The getblockchaininfo call checks the state for the
 	// block AFTER the current height.
 	numBlocks := (r.ActiveNet.MinerConfirmationWindow * 2) - 8
-	if _, err := r.Node.Generate(numBlocks); err != nil {
+	if _, err := r.Client.Generate(numBlocks); err != nil {
 		t.Fatalf("unable to generate blocks: %v", err)
 	}
 
@@ -530,7 +534,7 @@ func TestBIP0068AndBIP0112Activation(t *testing.T) {
 			t.Fatalf("unable to create CSV output: %v", err)
 		}
 
-		if _, err := r.Node.SendRawTransaction(tx, true); err != nil {
+		if _, err := r.Client.SendRawTransaction(tx, true); err != nil {
 			t.Fatalf("unable to broadcast transaction: %v", err)
 		}
 
@@ -542,17 +546,17 @@ func TestBIP0068AndBIP0112Activation(t *testing.T) {
 	}
 
 	// Mine a single block including all the transactions generated above.
-	if _, err := r.Node.Generate(1); err != nil {
+	if _, err := r.Client.Generate(1); err != nil {
 		t.Fatalf("unable to generate block: %v", err)
 	}
 
 	// Now mine 10 additional blocks giving the inputs generated above a
 	// age of 11. Space out each block 10 minutes after the previous block.
-	prevBlockHash, err := r.Node.GetBestBlockHash()
+	prevBlockHash, err := r.Client.GetBestBlockHash()
 	if err != nil {
 		t.Fatalf("unable to get prior block hash: %v", err)
 	}
-	prevBlock, err := r.Node.GetBlock(prevBlockHash)
+	prevBlock, err := r.Client.GetBlock(prevBlockHash)
 	if err != nil {
 		t.Fatalf("unable to get block: %v", err)
 	}
@@ -652,7 +656,7 @@ func TestBIP0068AndBIP0112Activation(t *testing.T) {
 	}
 
 	for i, test := range tests {
-		txid, err := r.Node.SendRawTransaction(test.tx, true)
+		txid, err := r.Client.SendRawTransaction(test.tx, true)
 		switch {
 		// Test case passes, nothing further to report.
 		case test.accept && err == nil:
@@ -686,7 +690,7 @@ func TestBIP0068AndBIP0112Activation(t *testing.T) {
 
 		// Generate a block, the transaction should be included within
 		// the newly mined block.
-		blockHashes, err := r.Node.Generate(1)
+		blockHashes, err := r.Client.Generate(1)
 		if err != nil {
 			t.Fatalf("unable to mine block: %v", err)
 		}

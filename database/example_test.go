@@ -10,11 +10,11 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/btcutil/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
 	"github.com/btcsuite/btcd/database"
 	_ "github.com/btcsuite/btcd/database/ffldb"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 // This example demonstrates creating a new database.
@@ -122,9 +122,14 @@ func Example_blockStorageAndRetrieval() {
 	// Typically you wouldn't want to remove the database right away like
 	// this, nor put it in the temp directory, but it's done here to ensure
 	// the example cleans up after itself.
-	dbPath := filepath.Join(os.TempDir(), "exampleblkstorage")
+	dbPath, err := os.MkdirTemp("", "exampleblkstorage")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 	db, err := database.Create("ffldb", dbPath, wire.MainNet)
 	if err != nil {
+		fmt.Println("fail here")
 		fmt.Println(err)
 		return
 	}

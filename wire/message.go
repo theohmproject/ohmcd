@@ -1,4 +1,4 @@
-// Copyright (c) 2013-2016 The btcsuite developers
+// Copyright (c) 2013-2024 The btcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -10,7 +10,7 @@ import (
 	"io"
 	"unicode/utf8"
 
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/chainhash/v2"
 )
 
 // MessageHeaderSize is the number of bytes in a bitcoin message header.
@@ -23,8 +23,16 @@ const MessageHeaderSize = 24
 const CommandSize = 12
 
 // MaxMessagePayload is the maximum bytes a message can be regardless of other
-// individual limits imposed by messages themselves.
-const MaxMessagePayload = (1024 * 1024 * 32) // 32MB
+// individual limits imposed by messages themselves. This is used as a
+// serialization bound for all contexts (disk, RPC, network, etc.).
+const MaxMessagePayload = (1024 * 1024 * 32) // 32MiB
+
+// MaxProtocolMessageLength is the maximum length of an incoming/outgoing p2p
+// protocol message. This is separate from MaxMessagePayload which is used as a
+// general serialization bound. No current valid p2p message exceeds 4MB.
+// This mirrors Bitcoin Core's MAX_PROTOCOL_MESSAGE_LENGTH introduced in
+// bitcoin/bitcoin#5843.
+const MaxProtocolMessageLength = (4 * 1000 * 1000) // ~4MB
 
 // Commands used in bitcoin message headers which describe the type of message.
 const (
@@ -32,6 +40,7 @@ const (
 	CmdVerAck       = "verack"
 	CmdGetAddr      = "getaddr"
 	CmdAddr         = "addr"
+	CmdAddrV2       = "addrv2"
 	CmdGetBlocks    = "getblocks"
 	CmdInv          = "inv"
 	CmdGetData      = "getdata"
@@ -42,7 +51,6 @@ const (
 	CmdHeaders      = "headers"
 	CmdPing         = "ping"
 	CmdPong         = "pong"
-	CmdAlert        = "alert"
 	CmdMemPool      = "mempool"
 	CmdFilterAdd    = "filteradd"
 	CmdFilterClear  = "filterclear"
@@ -57,6 +65,64 @@ const (
 	CmdCFilter      = "cfilter"
 	CmdCFHeaders    = "cfheaders"
 	CmdCFCheckpt    = "cfcheckpt"
+	CmdSendAddrV2   = "sendaddrv2"
+	CmdWTxIdRelay   = "wtxidrelay"
+)
+
+var (
+	v2MessageIDs = map[uint8]string{
+		1:  CmdAddr,
+		2:  CmdBlock,
+		5:  CmdFeeFilter,
+		6:  CmdFilterAdd,
+		7:  CmdFilterClear,
+		8:  CmdFilterLoad,
+		9:  CmdGetBlocks,
+		11: CmdGetData,
+		12: CmdGetHeaders,
+		13: CmdHeaders,
+		14: CmdInv,
+		15: CmdMemPool,
+		16: CmdMerkleBlock,
+		17: CmdNotFound,
+		18: CmdPing,
+		19: CmdPong,
+		21: CmdTx,
+		22: CmdGetCFilters,
+		23: CmdCFilter,
+		24: CmdGetCFHeaders,
+		25: CmdCFHeaders,
+		26: CmdGetCFCheckpt,
+		27: CmdCFCheckpt,
+		28: CmdAddrV2,
+	}
+
+	v2Messages = map[string]uint8{
+		CmdAddr:         1,
+		CmdBlock:        2,
+		CmdFeeFilter:    5,
+		CmdFilterAdd:    6,
+		CmdFilterClear:  7,
+		CmdFilterLoad:   8,
+		CmdGetBlocks:    9,
+		CmdGetData:      11,
+		CmdGetHeaders:   12,
+		CmdHeaders:      13,
+		CmdInv:          14,
+		CmdMemPool:      15,
+		CmdMerkleBlock:  16,
+		CmdNotFound:     17,
+		CmdPing:         18,
+		CmdPong:         19,
+		CmdTx:           21,
+		CmdGetCFilters:  22,
+		CmdCFilter:      23,
+		CmdGetCFHeaders: 24,
+		CmdCFHeaders:    25,
+		CmdGetCFCheckpt: 26,
+		CmdCFCheckpt:    27,
+		CmdAddrV2:       28,
+	}
 )
 
 // MessageEncoding represents the wire message encoding format to be used.
@@ -76,6 +142,13 @@ const (
 // LatestEncoding is the most recently specified encoding for the Bitcoin wire
 // protocol.
 var LatestEncoding = WitnessEncoding
+
+// ErrUnknownMessage is the error returned when decoding an unknown message.
+var ErrUnknownMessage = fmt.Errorf("received unknown message")
+
+// ErrInvalidHandshake is the error returned when a peer sends us a known
+// message that does not belong in the version-verack handshake.
+var ErrInvalidHandshake = fmt.Errorf("invalid message during handshake")
 
 // Message is an interface that describes a bitcoin message.  A type that
 // implements Message has complete control over the representation of its data
@@ -99,11 +172,17 @@ func makeEmptyMessage(command string) (Message, error) {
 	case CmdVerAck:
 		msg = &MsgVerAck{}
 
+	case CmdSendAddrV2:
+		msg = &MsgSendAddrV2{}
+
 	case CmdGetAddr:
 		msg = &MsgGetAddr{}
 
 	case CmdAddr:
 		msg = &MsgAddr{}
+
+	case CmdAddrV2:
+		msg = &MsgAddrV2{}
 
 	case CmdGetBlocks:
 		msg = &MsgGetBlocks{}
@@ -134,9 +213,6 @@ func makeEmptyMessage(command string) (Message, error) {
 
 	case CmdHeaders:
 		msg = &MsgHeaders{}
-
-	case CmdAlert:
-		msg = &MsgAlert{}
 
 	case CmdMemPool:
 		msg = &MsgMemPool{}
@@ -181,7 +257,7 @@ func makeEmptyMessage(command string) (Message, error) {
 		msg = &MsgCFCheckpt{}
 
 	default:
-		return nil, fmt.Errorf("unhandled command [%s]", command)
+		return nil, ErrUnknownMessage
 	}
 	return msg, nil
 }
@@ -213,9 +289,36 @@ func readMessageHeader(r io.Reader) (int, *messageHeader, error) {
 	readElements(hr, &hdr.magic, &command, &hdr.length, &hdr.checksum)
 
 	// Strip trailing zeros from command string.
-	hdr.command = string(bytes.TrimRight(command[:], string(0)))
+	hdr.command = string(bytes.TrimRight(command[:], "\x00"))
 
 	return n, &hdr, nil
+}
+
+// readPartialHeader reads a partial bitcon message header from r. It takes a
+// prefix that contains the already-parsed bytes. This is needed in the case of
+// a downgraded v2->v1 transport connection since we have already started
+// parsing the header bytes when calling into this function.
+func readPartialHeader(prefix []byte, r io.Reader) (int, *messageHeader,
+	error) {
+
+	// Fill out the messageHeader with the network magic from the prefix.
+	hdr := messageHeader{}
+
+	var command [CommandSize]byte
+	prefixReader := bytes.NewReader(prefix[:])
+	if err := readElements(prefixReader, &hdr.magic, &command); err != nil {
+		return 0, nil, err
+	}
+
+	// Strip trailing zeros from command string.
+	hdr.command = string(bytes.TrimRight(command[:], "\x00"))
+
+	// Read the rest of the message header from the passed-in reader.
+	if err := readElements(r, &hdr.length, &hdr.checksum); err != nil {
+		return 0, nil, err
+	}
+
+	return MessageHeaderSize, &hdr, nil
 }
 
 // discardInput reads n bytes from reader r in chunks and discards the read
@@ -255,6 +358,80 @@ func WriteMessage(w io.Writer, msg Message, pver uint32, btcnet BitcoinNet) erro
 	return err
 }
 
+// WriteV2MessageN writes a Message to the passed Writer using the bip324
+// v2 encoding.
+func WriteV2MessageN(w io.Writer, msg Message, pver uint32,
+	encoding MessageEncoding) (int, error) {
+
+	var totalBytes int
+
+	cmd := msg.Command()
+	if len(cmd) > CommandSize {
+		str := fmt.Sprintf("command [%s] is too long [max %v]",
+			cmd, CommandSize)
+		return totalBytes, messageError("WriteMessage", str)
+	}
+
+	index, exists := v2Messages[cmd]
+	if !exists {
+		var command [CommandSize]byte
+		copy(command[:], cmd)
+		hw := bytes.NewBuffer(make([]byte, 0, CommandSize+1))
+		writeElements(hw, byte(0x00), command)
+
+		n, err := w.Write(hw.Bytes())
+		if err != nil {
+			return 0, err
+		}
+
+		totalBytes += n
+	} else {
+		hw := bytes.NewBuffer(make([]byte, 0, 1))
+		writeElement(hw, index)
+
+		n, err := w.Write(hw.Bytes())
+		if err != nil {
+			return 0, err
+		}
+
+		totalBytes += n
+	}
+
+	var bw bytes.Buffer
+	err := msg.BtcEncode(&bw, pver, encoding)
+	if err != nil {
+		return totalBytes, err
+	}
+
+	payload := bw.Bytes()
+	lenp := len(payload)
+
+	// Enforce maximum protocol message payload.
+	if lenp > MaxProtocolMessageLength {
+		str := fmt.Sprintf("message payload is too large - encoded "+
+			"%d bytes, but maximum message payload is %d bytes",
+			lenp, MaxProtocolMessageLength)
+		return totalBytes, messageError("WriteMessage", str)
+	}
+
+	mpl := msg.MaxPayloadLength(pver)
+	if uint32(lenp) > mpl {
+		str := fmt.Sprintf("message payload is too large - encoded "+
+			"%d bytes, but maximum message payload size for "+
+			"messages of type [%s] is %d.", lenp, cmd, mpl)
+		return totalBytes, messageError("WriteMessage", str)
+	}
+
+	if len(payload) > 0 {
+		n, err := w.Write(payload)
+		totalBytes += n
+
+		return totalBytes, err
+	}
+
+	return totalBytes, nil
+}
+
 // WriteMessageWithEncodingN writes a bitcoin Message to w including the
 // necessary header information and returns the number of bytes written.
 // This function is the same as WriteMessageN except it also allows the caller
@@ -284,11 +461,11 @@ func WriteMessageWithEncodingN(w io.Writer, msg Message, pver uint32,
 	payload := bw.Bytes()
 	lenp := len(payload)
 
-	// Enforce maximum overall message payload.
-	if lenp > MaxMessagePayload {
+	// Enforce maximum protocol message payload.
+	if lenp > MaxProtocolMessageLength {
 		str := fmt.Sprintf("message payload is too large - encoded "+
 			"%d bytes, but maximum message payload is %d bytes",
-			lenp, MaxMessagePayload)
+			lenp, MaxProtocolMessageLength)
 		return totalBytes, messageError("WriteMessage", str)
 	}
 
@@ -321,10 +498,85 @@ func WriteMessageWithEncodingN(w io.Writer, msg Message, pver uint32,
 		return totalBytes, err
 	}
 
-	// Write payload.
-	n, err = w.Write(payload)
-	totalBytes += n
+	// Only write the payload if there is one, e.g., verack messages don't
+	// have one.
+	if len(payload) > 0 {
+		n, err = w.Write(payload)
+		totalBytes += n
+	}
+
 	return totalBytes, err
+}
+
+// ReadV2MessageN takes the passed plaintext and attempts to construct a
+// Message from the bytes using the bip324 v2 encoding.
+func ReadV2MessageN(plaintext []byte, pver uint32, enc MessageEncoding) (
+	Message, []byte, error) {
+
+	if len(plaintext) == 0 {
+		return nil, nil, messageError("ReadV2MessageN",
+			"invalid plaintext length")
+	}
+
+	var msgCmd string
+
+	// If the first byte is 0x00, read the next 12 bytes to determine what
+	// message this is.
+	if plaintext[0] == 0x00 {
+		if len(plaintext) < CommandSize+1 {
+			return nil, nil, messageError("ReadV2MessageN",
+				"invalid plaintext length")
+		}
+
+		// Slice off the first 0x00 and the trailing 0x00 bytes.
+		var command [CommandSize]byte
+		copy(command[:], plaintext[1:CommandSize+1])
+
+		msgCmd = string(bytes.TrimRight(command[:], "\x00"))
+
+		plaintext = plaintext[CommandSize+1:]
+	} else {
+		// The first byte denotes what message this is.
+		msgCmd = v2MessageIDs[plaintext[0]]
+
+		plaintext = plaintext[1:]
+	}
+
+	msg, err := makeEmptyMessage(msgCmd)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Enforce maximum protocol message payload.
+	if len(plaintext) > MaxProtocolMessageLength {
+		str := fmt.Sprintf("message payload is too large - "+
+			"%d bytes, but max message payload is %d bytes",
+			len(plaintext), MaxProtocolMessageLength)
+		return nil, nil, messageError("ReadV2MessageN", str)
+	}
+
+	// Check for maximum length based on the message type.
+	mpl := msg.MaxPayloadLength(pver)
+	if len(plaintext) > int(mpl) {
+		str := fmt.Sprintf("payload exceeds max length - "+
+			"%d bytes, but max payload size for messages of "+
+			"type [%v] is %v.", len(plaintext), msgCmd, mpl)
+		return nil, nil, messageError("ReadV2MessageN", str)
+	}
+
+	buf := bytes.NewBuffer(plaintext)
+	err = msg.BtcDecode(buf, pver, enc)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if buf.Len() > 0 {
+		str := fmt.Sprintf("message payload has %d extra bytes "+
+			"after decode", buf.Len())
+		return nil, nil, messageError("ReadV2MessageN", str)
+	}
+
+	return msg, plaintext, nil
 }
 
 // ReadMessageWithEncodingN reads, validates, and parses the next bitcoin Message
@@ -343,11 +595,43 @@ func ReadMessageWithEncodingN(r io.Reader, pver uint32, btcnet BitcoinNet,
 		return totalBytes, nil, nil, err
 	}
 
-	// Enforce maximum message payload.
-	if hdr.length > MaxMessagePayload {
+	return readMessageWithEncodingNInternal(
+		r, pver, hdr, btcnet, enc, totalBytes,
+	)
+}
+
+// ReadPartialMessageWithEncodingN is used in the case that we are expecting a
+// v2 connection and then receive a v1 version header. In this case, we
+// downgrade the implicit v2 connection to a v1 connection and must parse the
+// rest of the version bytes and check it properly.
+func ReadPartialMessageWithEncodingN(r io.Reader, pver uint32,
+	btcnet BitcoinNet, enc MessageEncoding, prefix []byte) (int, Message,
+	[]byte, error) {
+
+	totalBytes := 0
+	n, hdr, err := readPartialHeader(prefix, r)
+	totalBytes += n
+	if err != nil {
+		return totalBytes, nil, nil, err
+	}
+
+	return readMessageWithEncodingNInternal(
+		r, pver, hdr, btcnet, enc, totalBytes,
+	)
+}
+
+// readMessageWithEncodingNInternal is used to deduplicate the code because we
+// typically parse messages and headers all at once except in the case of a
+// downgraded v2->v1 conncection.
+func readMessageWithEncodingNInternal(r io.Reader, pver uint32,
+	hdr *messageHeader, btcnet BitcoinNet, enc MessageEncoding,
+	totalBytes int) (int, Message, []byte, error) {
+
+	// Enforce maximum protocol message payload.
+	if hdr.length > MaxProtocolMessageLength {
 		str := fmt.Sprintf("message payload is too large - header "+
 			"indicates %d bytes, but max message payload is %d "+
-			"bytes.", hdr.length, MaxMessagePayload)
+			"bytes.", hdr.length, MaxProtocolMessageLength)
 		return totalBytes, nil, nil, messageError("ReadMessage", str)
 
 	}
@@ -370,9 +654,10 @@ func ReadMessageWithEncodingN(r io.Reader, pver uint32, btcnet BitcoinNet,
 	// Create struct of appropriate message type based on the command.
 	msg, err := makeEmptyMessage(command)
 	if err != nil {
+		// makeEmptyMessage can only return ErrUnknownMessage and it is
+		// important that we bubble it up to the caller.
 		discardInput(r, hdr.length)
-		return totalBytes, nil, nil, messageError("ReadMessage",
-			err.Error())
+		return totalBytes, nil, nil, err
 	}
 
 	// Check for maximum length based on the message type as a malicious client
@@ -387,17 +672,17 @@ func ReadMessageWithEncodingN(r io.Reader, pver uint32, btcnet BitcoinNet,
 		return totalBytes, nil, nil, messageError("ReadMessage", str)
 	}
 
-	// Read payload.
-	payload := make([]byte, hdr.length)
-	n, err = io.ReadFull(r, payload)
-	totalBytes += n
+	// Read the payload as bytes arrive so a header cannot reserve the full
+	// claimed length on its own.
+	payload, err := readBytes(r, uint64(hdr.length))
+	totalBytes += len(payload)
 	if err != nil {
 		return totalBytes, nil, nil, err
 	}
 
 	// Test checksum.
 	checksum := chainhash.DoubleHashB(payload)[0:4]
-	if !bytes.Equal(checksum[:], hdr.checksum[:]) {
+	if !bytes.Equal(checksum, hdr.checksum[:]) {
 		str := fmt.Sprintf("payload checksum failed - header "+
 			"indicates %v, but actual checksum is %v.",
 			hdr.checksum, checksum)
@@ -410,6 +695,16 @@ func ReadMessageWithEncodingN(r io.Reader, pver uint32, btcnet BitcoinNet,
 	err = msg.BtcDecode(pr, pver, enc)
 	if err != nil {
 		return totalBytes, nil, nil, err
+	}
+
+	// Reject messages where the payload was not fully consumed by
+	// BtcDecode. A peer could otherwise append arbitrary trailing bytes
+	// to an otherwise valid message, which would be silently accepted
+	// and persisted (e.g., in the block database).
+	if pr.Len() > 0 {
+		str := fmt.Sprintf("message payload has %d extra bytes "+
+			"after decode", pr.Len())
+		return totalBytes, nil, nil, messageError("ReadMessage", str)
 	}
 
 	return totalBytes, msg, payload, nil

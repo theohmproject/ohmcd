@@ -5,6 +5,7 @@
 package wire
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
@@ -12,7 +13,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/chainhash/v2"
 )
 
 const (
@@ -22,7 +23,133 @@ const (
 	// binaryFreeListMaxItems is the number of buffers to keep in the free
 	// list to use for binary serialization and deserialization.
 	binaryFreeListMaxItems = 1024
+
+	// defaultReadBufferSize bounds speculative allocation when a reader does
+	// not expose the number of bytes it has remaining.
+	defaultReadBufferSize = 4096
+
+	// defaultStreamingElementCap bounds speculative vector allocation when a
+	// reader does not expose the number of bytes it has remaining.
+	defaultStreamingElementCap = 128
 )
+
+// readBytes reads count bytes without allocating the full claimed size until
+// the reader proves that the bytes are available. Buffered message decoders
+// expose their remaining length, which preserves the single allocation fast
+// path for complete payloads. Streaming readers grow in small increments as
+// data arrives.
+func readBytes(r io.Reader, count uint64) ([]byte, error) {
+	if count == 0 {
+		return []byte{}, nil
+	}
+
+	available, known := readerRemaining(r)
+	if known && count <= available {
+		result := make([]byte, count)
+		n, err := io.ReadFull(r, result)
+		return result[:n], err
+	}
+
+	// Read into bounded chunks rather than using io.CopyN with a
+	// bytes.Buffer. Buffer.ReadFrom reserves more space before its final EOF
+	// check, which can grow the buffer beyond count after a complete read.
+	// Each chunk below is capped by the remaining payload and is allocated
+	// only after the preceding bytes arrive.
+	remaining := count
+	chunkSize := uint64(defaultReadBufferSize)
+
+	// The current payload maximum needs fewer than 16 geometrically sized
+	// chunks, so the chunk metadata does not need to grow while reading.
+	chunks := make([][]byte, 0, 16)
+	totalRead := 0
+	for remaining > 0 {
+		chunkSize = min(chunkSize, remaining)
+		chunk := make([]byte, int(chunkSize))
+		n := 0
+		var err error
+		for n < len(chunk) && err == nil {
+			var bytesRead int
+			bytesRead, err = r.Read(chunk[n:])
+			n += bytesRead
+		}
+
+		chunks = append(chunks, chunk[:n])
+		totalRead += n
+		remaining -= uint64(n)
+		if err != nil && remaining > 0 {
+			if err == io.EOF && totalRead > 0 {
+				err = io.ErrUnexpectedEOF
+			}
+			if len(chunks) == 1 {
+				return chunks[0], err
+			}
+
+			return bytes.Join(chunks, nil), err
+		}
+
+		chunkSize *= 2
+	}
+
+	if len(chunks) == 1 {
+		return chunks[0], nil
+	}
+
+	return bytes.Join(chunks, nil), nil
+}
+
+// readerRemaining returns the number of buffered bytes exposed by the concrete
+// readers used by wire decoders. Other readers use the staged streaming path.
+func readerRemaining(r io.Reader) (uint64, bool) {
+	switch r := r.(type) {
+	case *bytes.Buffer:
+		return uint64(r.Len()), true
+
+	case *bytes.Reader:
+		return uint64(r.Len()), true
+
+	default:
+		return 0, false
+	}
+}
+
+// validateElementCount ensures a buffered payload has enough bytes remaining
+// to encode the claimed number of elements before a decoder allocates for the
+// count. The framed wire path passes a bytes.Buffer to each message decoder,
+// while callers without a measurable remainder retain streaming semantics.
+func validateElementCount(r io.Reader, count,
+	minElementSize uint64) error {
+
+	_, err := canPreallocateElements(r, count, minElementSize)
+	return err
+}
+
+// canPreallocateElements reports whether a reader proves that the minimum
+// encoding for count elements is already buffered. Readers without a
+// measurable remainder must grow element storage as decoding makes progress.
+func canPreallocateElements(r io.Reader, count,
+	minElementSize uint64) (bool, error) {
+
+	remaining, ok := readerRemaining(r)
+	if !ok || minElementSize == 0 {
+		return false, nil
+	}
+
+	if count <= remaining/minElementSize {
+		return true, nil
+	}
+
+	return false, elementCountError(remaining)
+}
+
+// elementCountError preserves the short-read error returned by the element
+// decoder when the claimed vector cannot fit in the remaining payload.
+func elementCountError(remaining uint64) error {
+	if remaining == 0 {
+		return io.EOF
+	}
+
+	return io.ErrUnexpectedEOF
+}
 
 var (
 	// littleEndian is a convenience variable since binary.LittleEndian is
@@ -73,12 +200,13 @@ func (l binaryFreeList) Return(buf []byte) {
 // free list and returns it as a uint8.
 func (l binaryFreeList) Uint8(r io.Reader) (uint8, error) {
 	buf := l.Borrow()[:1]
+	defer l.Return(buf)
+
 	if _, err := io.ReadFull(r, buf); err != nil {
-		l.Return(buf)
 		return 0, err
 	}
 	rv := buf[0]
-	l.Return(buf)
+
 	return rv, nil
 }
 
@@ -87,12 +215,13 @@ func (l binaryFreeList) Uint8(r io.Reader) (uint8, error) {
 // the resulting uint16.
 func (l binaryFreeList) Uint16(r io.Reader, byteOrder binary.ByteOrder) (uint16, error) {
 	buf := l.Borrow()[:2]
+	defer l.Return(buf)
+
 	if _, err := io.ReadFull(r, buf); err != nil {
-		l.Return(buf)
 		return 0, err
 	}
 	rv := byteOrder.Uint16(buf)
-	l.Return(buf)
+
 	return rv, nil
 }
 
@@ -101,12 +230,13 @@ func (l binaryFreeList) Uint16(r io.Reader, byteOrder binary.ByteOrder) (uint16,
 // the resulting uint32.
 func (l binaryFreeList) Uint32(r io.Reader, byteOrder binary.ByteOrder) (uint32, error) {
 	buf := l.Borrow()[:4]
+	defer l.Return(buf)
+
 	if _, err := io.ReadFull(r, buf); err != nil {
-		l.Return(buf)
 		return 0, err
 	}
 	rv := byteOrder.Uint32(buf)
-	l.Return(buf)
+
 	return rv, nil
 }
 
@@ -115,12 +245,13 @@ func (l binaryFreeList) Uint32(r io.Reader, byteOrder binary.ByteOrder) (uint32,
 // the resulting uint64.
 func (l binaryFreeList) Uint64(r io.Reader, byteOrder binary.ByteOrder) (uint64, error) {
 	buf := l.Borrow()[:8]
+	defer l.Return(buf)
+
 	if _, err := io.ReadFull(r, buf); err != nil {
-		l.Return(buf)
 		return 0, err
 	}
 	rv := byteOrder.Uint64(buf)
-	l.Return(buf)
+
 	return rv, nil
 }
 
@@ -128,9 +259,11 @@ func (l binaryFreeList) Uint64(r io.Reader, byteOrder binary.ByteOrder) (uint64,
 // writes the resulting byte to the given writer.
 func (l binaryFreeList) PutUint8(w io.Writer, val uint8) error {
 	buf := l.Borrow()[:1]
+	defer l.Return(buf)
+
 	buf[0] = val
 	_, err := w.Write(buf)
-	l.Return(buf)
+
 	return err
 }
 
@@ -139,9 +272,11 @@ func (l binaryFreeList) PutUint8(w io.Writer, val uint8) error {
 // writer.
 func (l binaryFreeList) PutUint16(w io.Writer, byteOrder binary.ByteOrder, val uint16) error {
 	buf := l.Borrow()[:2]
+	defer l.Return(buf)
+
 	byteOrder.PutUint16(buf, val)
 	_, err := w.Write(buf)
-	l.Return(buf)
+
 	return err
 }
 
@@ -150,9 +285,11 @@ func (l binaryFreeList) PutUint16(w io.Writer, byteOrder binary.ByteOrder, val u
 // writer.
 func (l binaryFreeList) PutUint32(w io.Writer, byteOrder binary.ByteOrder, val uint32) error {
 	buf := l.Borrow()[:4]
+	defer l.Return(buf)
+
 	byteOrder.PutUint32(buf, val)
 	_, err := w.Write(buf)
-	l.Return(buf)
+
 	return err
 }
 
@@ -161,9 +298,11 @@ func (l binaryFreeList) PutUint32(w io.Writer, byteOrder binary.ByteOrder, val u
 // writer.
 func (l binaryFreeList) PutUint64(w io.Writer, byteOrder binary.ByteOrder, val uint64) error {
 	buf := l.Borrow()[:8]
+	defer l.Return(buf)
+
 	byteOrder.PutUint64(buf, val)
 	_, err := w.Write(buf)
-	l.Return(buf)
+
 	return err
 }
 
@@ -474,19 +613,30 @@ func writeElements(w io.Writer, elements ...interface{}) error {
 
 // ReadVarInt reads a variable length integer from r and returns it as a uint64.
 func ReadVarInt(r io.Reader, pver uint32) (uint64, error) {
-	discriminant, err := binarySerializer.Uint8(r)
-	if err != nil {
+	buf := binarySerializer.Borrow()
+	defer binarySerializer.Return(buf)
+
+	n, err := ReadVarIntBuf(r, pver, buf)
+	return n, err
+}
+
+// ReadVarIntBuf reads a variable length integer from r using a preallocated
+// scratch buffer and returns it as a uint64.
+//
+// NOTE: buf MUST at least an 8-byte slice.
+func ReadVarIntBuf(r io.Reader, pver uint32, buf []byte) (uint64, error) {
+	if _, err := io.ReadFull(r, buf[:1]); err != nil {
 		return 0, err
 	}
+	discriminant := buf[0]
 
 	var rv uint64
 	switch discriminant {
 	case 0xff:
-		sv, err := binarySerializer.Uint64(r, littleEndian)
-		if err != nil {
+		if _, err := io.ReadFull(r, buf); err != nil {
 			return 0, err
 		}
-		rv = sv
+		rv = littleEndian.Uint64(buf)
 
 		// The encoding is not canonical if the value could have been
 		// encoded using fewer bytes.
@@ -497,11 +647,10 @@ func ReadVarInt(r io.Reader, pver uint32) (uint64, error) {
 		}
 
 	case 0xfe:
-		sv, err := binarySerializer.Uint32(r, littleEndian)
-		if err != nil {
+		if _, err := io.ReadFull(r, buf[:4]); err != nil {
 			return 0, err
 		}
-		rv = uint64(sv)
+		rv = uint64(littleEndian.Uint32(buf[:4]))
 
 		// The encoding is not canonical if the value could have been
 		// encoded using fewer bytes.
@@ -512,11 +661,10 @@ func ReadVarInt(r io.Reader, pver uint32) (uint64, error) {
 		}
 
 	case 0xfd:
-		sv, err := binarySerializer.Uint16(r, littleEndian)
-		if err != nil {
+		if _, err := io.ReadFull(r, buf[:2]); err != nil {
 			return 0, err
 		}
-		rv = uint64(sv)
+		rv = uint64(littleEndian.Uint16(buf[:2]))
 
 		// The encoding is not canonical if the value could have been
 		// encoded using fewer bytes.
@@ -536,31 +684,46 @@ func ReadVarInt(r io.Reader, pver uint32) (uint64, error) {
 // WriteVarInt serializes val to w using a variable number of bytes depending
 // on its value.
 func WriteVarInt(w io.Writer, pver uint32, val uint64) error {
-	if val < 0xfd {
-		return binarySerializer.PutUint8(w, uint8(val))
-	}
+	buf := binarySerializer.Borrow()
+	defer binarySerializer.Return(buf)
 
-	if val <= math.MaxUint16 {
-		err := binarySerializer.PutUint8(w, 0xfd)
-		if err != nil {
+	err := WriteVarIntBuf(w, pver, val, buf)
+	return err
+}
+
+// WriteVarIntBuf serializes val to w using a variable number of bytes depending
+// on its value using a preallocated scratch buffer.
+//
+// NOTE: buf MUST at least an 8-byte slice.
+func WriteVarIntBuf(w io.Writer, pver uint32, val uint64, buf []byte) error {
+	switch {
+	case val < 0xfd:
+		buf[0] = uint8(val)
+		_, err := w.Write(buf[:1])
+		return err
+
+	case val <= math.MaxUint16:
+		buf[0] = 0xfd
+		littleEndian.PutUint16(buf[1:3], uint16(val))
+		_, err := w.Write(buf[:3])
+		return err
+
+	case val <= math.MaxUint32:
+		buf[0] = 0xfe
+		littleEndian.PutUint32(buf[1:5], uint32(val))
+		_, err := w.Write(buf[:5])
+		return err
+
+	default:
+		buf[0] = 0xff
+		if _, err := w.Write(buf[:1]); err != nil {
 			return err
 		}
-		return binarySerializer.PutUint16(w, littleEndian, uint16(val))
-	}
 
-	if val <= math.MaxUint32 {
-		err := binarySerializer.PutUint8(w, 0xfe)
-		if err != nil {
-			return err
-		}
-		return binarySerializer.PutUint32(w, littleEndian, uint32(val))
-	}
-
-	err := binarySerializer.PutUint8(w, 0xff)
-	if err != nil {
+		littleEndian.PutUint64(buf, val)
+		_, err := w.Write(buf)
 		return err
 	}
-	return binarySerializer.PutUint64(w, littleEndian, val)
 }
 
 // VarIntSerializeSize returns the number of bytes it would take to serialize
@@ -593,7 +756,23 @@ func VarIntSerializeSize(val uint64) int {
 // maximum block payload size since it helps protect against memory exhaustion
 // attacks and forced panics through malformed messages.
 func ReadVarString(r io.Reader, pver uint32) (string, error) {
-	count, err := ReadVarInt(r, pver)
+	buf := binarySerializer.Borrow()
+	defer binarySerializer.Return(buf)
+
+	str, err := readVarStringBuf(r, pver, buf)
+	return str, err
+}
+
+// readVarStringBuf reads a variable length string from r and returns it as a Go
+// string.  A variable length string is encoded as a variable length integer
+// containing the length of the string followed by the bytes that represent the
+// string itself.  An error is returned if the length is greater than the
+// maximum block payload size since it helps protect against memory exhaustion
+// attacks and forced panics through malformed messages.
+//
+// NOTE: buf MUST be at least an 8-byte slice.
+func readVarStringBuf(r io.Reader, pver uint32, buf []byte) (string, error) {
+	count, err := ReadVarIntBuf(r, pver, buf)
 	if err != nil {
 		return "", err
 	}
@@ -607,22 +786,35 @@ func ReadVarString(r io.Reader, pver uint32) (string, error) {
 		return "", messageError("ReadVarString", str)
 	}
 
-	buf := make([]byte, count)
-	_, err = io.ReadFull(r, buf)
+	str, err := readBytes(r, count)
 	if err != nil {
 		return "", err
 	}
-	return string(buf), nil
+	return string(str), nil
 }
 
 // WriteVarString serializes str to w as a variable length integer containing
 // the length of the string followed by the bytes that represent the string
 // itself.
 func WriteVarString(w io.Writer, pver uint32, str string) error {
-	err := WriteVarInt(w, pver, uint64(len(str)))
+	buf := binarySerializer.Borrow()
+	defer binarySerializer.Return(buf)
+
+	err := writeVarStringBuf(w, pver, str, buf)
+	return err
+}
+
+// writeVarStringBuf serializes str to w as a variable length integer containing
+// the length of the string followed by the bytes that represent the string
+// itself.
+//
+// NOTE: buf MUST be at least an 8-byte slice.
+func writeVarStringBuf(w io.Writer, pver uint32, str string, buf []byte) error {
+	err := WriteVarIntBuf(w, pver, uint64(len(str)), buf)
 	if err != nil {
 		return err
 	}
+
 	_, err = w.Write([]byte(str))
 	return err
 }
@@ -637,7 +829,26 @@ func WriteVarString(w io.Writer, pver uint32, str string) error {
 func ReadVarBytes(r io.Reader, pver uint32, maxAllowed uint32,
 	fieldName string) ([]byte, error) {
 
-	count, err := ReadVarInt(r, pver)
+	buf := binarySerializer.Borrow()
+	defer binarySerializer.Return(buf)
+
+	b, err := ReadVarBytesBuf(r, pver, buf, maxAllowed, fieldName)
+	return b, err
+}
+
+// ReadVarBytesBuf reads a variable length byte array.  A byte array is encoded
+// as a varInt containing the length of the array followed by the bytes
+// themselves.  An error is returned if the length is greater than the
+// passed maxAllowed parameter which helps protect against memory exhaustion
+// attacks and forced panics through malformed messages.  The fieldName
+// parameter is only used for the error message so it provides more context in
+// the error.
+//
+// NOTE: buf MUST be at least an 8-byte slice.
+func ReadVarBytesBuf(r io.Reader, pver uint32, buf []byte, maxAllowed uint32,
+	fieldName string) ([]byte, error) {
+
+	count, err := ReadVarIntBuf(r, pver, buf)
 	if err != nil {
 		return nil, err
 	}
@@ -651,19 +862,33 @@ func ReadVarBytes(r io.Reader, pver uint32, maxAllowed uint32,
 		return nil, messageError("ReadVarBytes", str)
 	}
 
-	b := make([]byte, count)
-	_, err = io.ReadFull(r, b)
+	bytes, err := readBytes(r, count)
 	if err != nil {
 		return nil, err
 	}
-	return b, nil
+
+	return bytes, nil
 }
 
 // WriteVarBytes serializes a variable length byte array to w as a varInt
 // containing the number of bytes, followed by the bytes themselves.
 func WriteVarBytes(w io.Writer, pver uint32, bytes []byte) error {
+	buf := binarySerializer.Borrow()
+	defer binarySerializer.Return(buf)
+
+	err := WriteVarBytesBuf(w, pver, bytes, buf)
+	return err
+}
+
+// WriteVarBytesBuf serializes a variable length byte array to w as a varInt
+// containing the number of bytes, followed by the bytes themselves. If b is
+// non-nil, the provided buffer will be used for serializing small values.
+// Otherwise a buffer will be drawn from the binarySerializer's pool and return
+// when the method finishes.
+func WriteVarBytesBuf(w io.Writer, pver uint32, bytes, buf []byte) error {
 	slen := uint64(len(bytes))
-	err := WriteVarInt(w, pver, slen)
+
+	err := WriteVarIntBuf(w, pver, slen, buf)
 	if err != nil {
 		return err
 	}

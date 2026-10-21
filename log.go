@@ -15,12 +15,14 @@ import (
 	"github.com/btcsuite/btcd/blockchain/indexers"
 	"github.com/btcsuite/btcd/connmgr"
 	"github.com/btcsuite/btcd/database"
+	"github.com/btcsuite/btcd/internal/inbound"
 	"github.com/btcsuite/btcd/mempool"
 	"github.com/btcsuite/btcd/mining"
 	"github.com/btcsuite/btcd/mining/cpuminer"
 	"github.com/btcsuite/btcd/netsync"
 	"github.com/btcsuite/btcd/peer"
-	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/v2transport"
 
 	"github.com/btcsuite/btclog"
 	"github.com/jrick/logrotate/rotator"
@@ -36,7 +38,7 @@ func (logWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-// Loggers per subsystem.  A single backend logger is created and all subsytem
+// Loggers per subsystem.  A single backend logger is created and all subsystem
 // loggers created from it will write to the backend.  When adding new
 // subsystems, add the subsystem logger variable here and to the
 // subsystemLoggers map.
@@ -69,6 +71,7 @@ var (
 	srvrLog = backendLog.Logger("SRVR")
 	syncLog = backendLog.Logger("SYNC")
 	txmpLog = backendLog.Logger("TXMP")
+	v2trLog = backendLog.Logger(v2transport.Subsystem)
 )
 
 // Initialize package-global logger variables.
@@ -76,6 +79,7 @@ func init() {
 	addrmgr.UseLogger(amgrLog)
 	connmgr.UseLogger(cmgrLog)
 	database.UseLogger(bcdbLog)
+	inbound.UseLogger(srvrLog)
 	blockchain.UseLogger(chanLog)
 	indexers.UseLogger(indxLog)
 	mining.UseLogger(minrLog)
@@ -84,25 +88,27 @@ func init() {
 	txscript.UseLogger(scrpLog)
 	netsync.UseLogger(syncLog)
 	mempool.UseLogger(txmpLog)
+	v2transport.UseLogger(v2trLog)
 }
 
 // subsystemLoggers maps each subsystem identifier to its associated logger.
 var subsystemLoggers = map[string]btclog.Logger{
-	"ADXR": adxrLog,
-	"AMGR": amgrLog,
-	"CMGR": cmgrLog,
-	"BCDB": bcdbLog,
-	"BTCD": btcdLog,
-	"CHAN": chanLog,
-	"DISC": discLog,
-	"INDX": indxLog,
-	"MINR": minrLog,
-	"PEER": peerLog,
-	"RPCS": rpcsLog,
-	"SCRP": scrpLog,
-	"SRVR": srvrLog,
-	"SYNC": syncLog,
-	"TXMP": txmpLog,
+	"ADXR":                adxrLog,
+	"AMGR":                amgrLog,
+	"CMGR":                cmgrLog,
+	"BCDB":                bcdbLog,
+	"BTCD":                btcdLog,
+	"CHAN":                chanLog,
+	"DISC":                discLog,
+	"INDX":                indxLog,
+	"MINR":                minrLog,
+	"PEER":                peerLog,
+	"RPCS":                rpcsLog,
+	"SCRP":                scrpLog,
+	"SRVR":                srvrLog,
+	"SYNC":                syncLog,
+	"TXMP":                txmpLog,
+	v2transport.Subsystem: v2trLog,
 }
 
 // initLogRotator initializes the logging rotater to write logs to logFile and

@@ -11,12 +11,14 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/btcsuite/btcd/address/v2"
 	"github.com/btcsuite/btcd/blockchain"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
+	"github.com/btcsuite/btcd/btcutil/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/mining"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 // solveBlock attempts to find a nonce which makes the passed block header hash
@@ -96,7 +98,7 @@ func standardCoinbaseScript(nextBlockHeight int32, extraNonce uint64) ([]byte, e
 // createCoinbaseTx returns a coinbase transaction paying an appropriate
 // subsidy based on the passed block height to the provided address.
 func createCoinbaseTx(coinbaseScript []byte, nextBlockHeight int32,
-	addr btcutil.Address, mineTo []wire.TxOut,
+	addr address.Address, mineTo []wire.TxOut,
 	net *chaincfg.Params) (*btcutil.Tx, error) {
 
 	// Create the script to pay to the provided payment address.
@@ -133,7 +135,7 @@ func createCoinbaseTx(coinbaseScript []byte, nextBlockHeight int32,
 // second is used. Passing nil for the previous block results in a block that
 // builds off of the genesis block for the specified chain.
 func CreateBlock(prevBlock *btcutil.Block, inclusionTxs []*btcutil.Tx,
-	blockVersion int32, blockTime time.Time, miningAddr btcutil.Address,
+	blockVersion int32, blockTime time.Time, miningAddr address.Address,
 	mineTo []wire.TxOut, net *chaincfg.Params) (*btcutil.Block, error) {
 
 	var (
@@ -181,12 +183,27 @@ func CreateBlock(prevBlock *btcutil.Block, inclusionTxs []*btcutil.Tx,
 	if inclusionTxs != nil {
 		blockTxns = append(blockTxns, inclusionTxs...)
 	}
-	merkles := blockchain.BuildMerkleTreeStore(blockTxns, false)
+
+	// We must add the witness commitment to the coinbase if any
+	// transactions are segwit.
+	witnessIncluded := false
+	for i := 1; i < len(blockTxns); i++ {
+		if blockTxns[i].MsgTx().HasWitness() {
+			witnessIncluded = true
+			break
+		}
+	}
+
+	if witnessIncluded {
+		_ = mining.AddWitnessCommitment(coinbaseTx, blockTxns)
+	}
+
+	merkleRoot := blockchain.CalcMerkleRoot(blockTxns, false)
 	var block wire.MsgBlock
 	block.Header = wire.BlockHeader{
 		Version:    blockVersion,
 		PrevBlock:  *prevHash,
-		MerkleRoot: *merkles[len(merkles)-1],
+		MerkleRoot: merkleRoot,
 		Timestamp:  ts,
 		Bits:       net.PowLimitBits,
 	}

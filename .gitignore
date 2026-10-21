@@ -32,3 +32,27 @@ _cgo_export.*
 _testmain.go
 
 *.exe
+
+# Code coverage files
+profile.tmp
+profile.cov
+coverage.txt
+coverage.txt.bak
+
+# vim
+*.swp
+*.swo
+/.vim
+
+#IDE
+.idea
+
+# Binaries produced by "make build"
+/addblock
+/btcctl
+/btcd
+/findcheckpoint
+/gencerts
+
+.DS_Store
+.aider*

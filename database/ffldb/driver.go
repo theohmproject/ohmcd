@@ -8,7 +8,7 @@ import (
 	"fmt"
 
 	"github.com/btcsuite/btcd/database"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/btcsuite/btclog"
 )
 
@@ -78,7 +78,7 @@ func init() {
 		UseLogger: useLogger,
 	}
 	if err := database.RegisterDriver(driver); err != nil {
-		panic(fmt.Sprintf("Failed to regiser database driver '%s': %v",
+		panic(fmt.Sprintf("Failed to register database driver '%s': %v",
 			dbType, err))
 	}
 }

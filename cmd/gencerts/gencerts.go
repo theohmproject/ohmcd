@@ -6,22 +6,21 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/btcsuite/btcutil"
+	"github.com/btcsuite/btcd/btcutil/v2"
 	flags "github.com/jessevdk/go-flags"
 )
 
 type config struct {
 	Directory    string   `short:"d" long:"directory" description:"Directory to write certificate pair"`
-	Years        int      `short:"y" long:"years" description:"How many years a certificate is valid for"`
-	Organization string   `short:"o" long:"org" description:"Organization in certificate"`
-	ExtraHosts   []string `short:"H" long:"host" description:"Additional hosts/IPs to create certificate for"`
 	Force        bool     `short:"f" long:"force" description:"Force overwriting of any old certs and keys"`
+	ExtraHosts   []string `short:"H" long:"host" description:"Additional hosts/IPs to create certificate for"`
+	Organization string   `short:"o" long:"org" description:"Organization in certificate"`
+	Years        int      `short:"y" long:"years" description:"How many years a certificate is valid for"`
 }
 
 func main() {
@@ -65,18 +64,18 @@ func main() {
 	}
 
 	// Write cert and key files.
-	if err = ioutil.WriteFile(certFile, cert, 0666); err != nil {
+	if err = os.WriteFile(certFile, cert, 0666); err != nil {
 		fmt.Fprintf(os.Stderr, "cannot write cert: %v\n", err)
 		os.Exit(1)
 	}
-	if err = ioutil.WriteFile(keyFile, key, 0600); err != nil {
+	if err = os.WriteFile(keyFile, key, 0600); err != nil {
 		os.Remove(certFile)
 		fmt.Fprintf(os.Stderr, "cannot write key: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-// cleanAndExpandPath expands environement variables and leading ~ in the
+// cleanAndExpandPath expands environment variables and leading ~ in the
 // passed path, cleans the result, and returns it.
 func cleanAndExpandPath(path string) string {
 	// Expand initial ~ to OS specific home directory.
@@ -91,7 +90,7 @@ func cleanAndExpandPath(path string) string {
 	return filepath.Clean(os.ExpandEnv(path))
 }
 
-// filesExists reports whether the named file or directory exists.
+// fileExists reports whether the named file or directory exists.
 func fileExists(name string) bool {
 	if _, err := os.Stat(name); err != nil {
 		if os.IsNotExist(err) {

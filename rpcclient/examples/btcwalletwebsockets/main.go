@@ -5,13 +5,13 @@
 package main
 
 import (
-	"io/ioutil"
 	"log"
+	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/btcsuite/btcd/btcutil/v2"
 	"github.com/btcsuite/btcd/rpcclient"
-	"github.com/btcsuite/btcutil"
 	"github.com/davecgh/go-spew/spew"
 )
 
@@ -29,7 +29,7 @@ func main() {
 
 	// Connect to local btcwallet RPC server using websockets.
 	certHomeDir := btcutil.AppDataDir("btcwallet", false)
-	certs, err := ioutil.ReadFile(filepath.Join(certHomeDir, "rpc.cert"))
+	certs, err := os.ReadFile(filepath.Join(certHomeDir, "rpc.cert"))
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -10,29 +10,81 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io/fs"
+	"math"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 )
+
+const (
+	// maxTxBaseSize mirrors blockchain.MaxBlockBaseSize so checkTxSanity can
+	// enforce the same stripped-size limit without importing blockchain.
+	maxTxBaseSize = 1000000
+)
+
+const (
+	scriptTestSigScriptOffset = iota
+	scriptTestPkScriptOffset
+	scriptTestFlagsOffset
+	scriptTestExpectedOffset
+	scriptTestCommentOffset
+)
+
+// allScriptFlags is the set of all currently defined script flags.
+const allScriptFlags = ScriptBip16 |
+	ScriptStrictMultiSig |
+	ScriptDiscourageUpgradableNops |
+	ScriptVerifyCheckLockTimeVerify |
+	ScriptVerifyCheckSequenceVerify |
+	ScriptVerifyCleanStack |
+	ScriptVerifyDERSignatures |
+	ScriptVerifyLowS |
+	ScriptVerifyMinimalData |
+	ScriptVerifyNullFail |
+	ScriptVerifySigPushOnly |
+	ScriptVerifyStrictEncoding |
+	ScriptVerifyWitness |
+	ScriptVerifyDiscourageUpgradeableWitnessProgram |
+	ScriptVerifyMinimalIf |
+	ScriptVerifyWitnessPubKeyType |
+	ScriptVerifyTaproot |
+	ScriptVerifyDiscourageUpgradeableTaprootVersion |
+	ScriptVerifyDiscourageOpSuccess |
+	ScriptVerifyDiscourageUpgradeablePubkeyType |
+	ScriptVerifyConstScriptCode
+
+// scriptTestWitnessOffset returns the field offset caused by optional witness
+// data at the beginning of a script_tests.json entry.
+func scriptTestWitnessOffset(test []interface{}) int {
+	if len(test) == 0 {
+		return 0
+	}
+
+	if _, ok := test[0].([]interface{}); ok {
+		return 1
+	}
+
+	return 0
+}
 
 // scriptTestName returns a descriptive test name for the given reference script
 // test data.
 func scriptTestName(test []interface{}) (string, error) {
 	// Account for any optional leading witness data.
-	var witnessOffset int
-	if _, ok := test[0].([]interface{}); ok {
-		witnessOffset++
-	}
+	witnessOffset := scriptTestWitnessOffset(test)
 
 	// In addition to the optional leading witness data, the test must
 	// consist of at least a signature script, public key script, flags,
 	// and expected error.  Finally, it may optionally contain a comment.
-	if len(test) < witnessOffset+4 || len(test) > witnessOffset+5 {
+	if len(test) < witnessOffset+scriptTestExpectedOffset+1 ||
+		len(test) > witnessOffset+scriptTestCommentOffset+1 {
+
 		return "", fmt.Errorf("invalid test length %d", len(test))
 	}
 
@@ -40,11 +92,14 @@ func scriptTestName(test []interface{}) (string, error) {
 	// construct the name based on the signature script, public key script,
 	// and flags.
 	var name string
-	if len(test) == witnessOffset+5 {
-		name = fmt.Sprintf("test (%s)", test[witnessOffset+4])
+	if len(test) == witnessOffset+scriptTestCommentOffset+1 {
+		name = fmt.Sprintf("test (%s)",
+			test[witnessOffset+scriptTestCommentOffset])
 	} else {
-		name = fmt.Sprintf("test ([%s, %s, %s])", test[witnessOffset],
-			test[witnessOffset+1], test[witnessOffset+2])
+		name = fmt.Sprintf("test ([%s, %s, %s])",
+			test[witnessOffset+scriptTestSigScriptOffset],
+			test[witnessOffset+scriptTestPkScriptOffset],
+			test[witnessOffset+scriptTestFlagsOffset])
 	}
 	return name, nil
 }
@@ -192,11 +247,156 @@ func parseScriptFlags(flagStr string) (ScriptFlags, error) {
 			flags |= ScriptVerifyMinimalIf
 		case "WITNESS_PUBKEYTYPE":
 			flags |= ScriptVerifyWitnessPubKeyType
+		case "TAPROOT":
+			flags |= ScriptVerifyTaproot
+		case "CONST_SCRIPTCODE":
+			flags |= ScriptVerifyConstScriptCode
 		default:
 			return flags, fmt.Errorf("invalid flag: %s", flag)
 		}
 	}
 	return flags, nil
+}
+
+// parseTxValidTestFlags parses the tx_valid flag field. Modern Bitcoin Core
+// tx_valid vectors encode flags to exclude from the full set of script flags.
+func parseTxValidTestFlags(flagStr string) (ScriptFlags, error) {
+	excluded, err := parseScriptFlags(flagStr)
+	if err != nil {
+		return 0, err
+	}
+
+	return allScriptFlags &^ excluded, nil
+}
+
+// parseTxInvalidTestFlags parses the tx_invalid flag field. Those vectors
+// still use the legacy included-flags convention plus the special BADTX marker
+// for context-free transaction-sanity failures.
+func parseTxInvalidTestFlags(flagStr string) (ScriptFlags, bool, error) {
+	badTx := false
+
+	parts := strings.Split(flagStr, ",")
+	filtered := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part == "BADTX" {
+			badTx = true
+			continue
+		}
+
+		filtered = append(filtered, part)
+	}
+
+	flags, err := parseScriptFlags(strings.Join(filtered, ","))
+	if err != nil {
+		return 0, false, err
+	}
+
+	return flags, badTx, nil
+}
+
+// maxSatoshi mirrors btcutil.MaxSatoshi so checkTxSanity can validate output
+// ranges without importing btcutil and creating an import cycle.
+const maxSatoshi = 21e6 * 1e8
+
+// checkTxSanity performs the subset of context-free transaction checks needed
+// by the tx_invalid BADTX vectors without importing blockchain and creating an
+// import cycle from txscript tests.
+func checkTxSanity(msgTx *wire.MsgTx) error {
+	if len(msgTx.TxIn) == 0 {
+		return errors.New("transaction has no inputs")
+	}
+	if len(msgTx.TxOut) == 0 {
+		return errors.New("transaction has no outputs")
+	}
+	if msgTx.SerializeSizeStripped() > maxTxBaseSize {
+		return errors.New("transaction exceeds max base size")
+	}
+
+	var totalSatoshi int64
+	for _, txOut := range msgTx.TxOut {
+		satoshi := txOut.Value
+		if satoshi < 0 {
+			return errors.New("negative output value")
+		}
+		if satoshi > maxSatoshi {
+			return errors.New("output exceeds max satoshi")
+		}
+
+		totalSatoshi += satoshi
+		if totalSatoshi < 0 || totalSatoshi > maxSatoshi {
+			return errors.New("total output exceeds max satoshi")
+		}
+	}
+
+	seen := make(map[wire.OutPoint]struct{}, len(msgTx.TxIn))
+	for _, txIn := range msgTx.TxIn {
+		if _, ok := seen[txIn.PreviousOutPoint]; ok {
+			return errors.New("duplicate inputs")
+		}
+		seen[txIn.PreviousOutPoint] = struct{}{}
+	}
+
+	if isCoinBaseTx(msgTx) {
+		slen := len(msgTx.TxIn[0].SignatureScript)
+		if slen < 2 || slen > 100 {
+			return errors.New("coinbase script length out of range")
+		}
+		return nil
+	}
+
+	for _, txIn := range msgTx.TxIn {
+		if isNullOutpoint(&txIn.PreviousOutPoint) {
+			return errors.New("null outpoint in non-coinbase tx")
+		}
+	}
+
+	return nil
+}
+
+func isCoinBaseTx(msgTx *wire.MsgTx) bool {
+	if len(msgTx.TxIn) != 1 {
+		return false
+	}
+
+	return isNullOutpoint(&msgTx.TxIn[0].PreviousOutPoint)
+}
+
+func isNullOutpoint(outpoint *wire.OutPoint) bool {
+	return outpoint.Index == ^uint32(0) && outpoint.Hash == (chainhash.Hash{})
+}
+
+func TestCheckTxSanityTooBig(t *testing.T) {
+	t.Parallel()
+
+	tx := wire.NewMsgTx(wire.TxVersion)
+	outpoint := wire.OutPoint{
+		Hash:  chainhash.Hash{0: 1},
+		Index: 0,
+	}
+	tx.AddTxIn(wire.NewTxIn(
+		&outpoint, bytes.Repeat([]byte{0x01}, maxTxBaseSize), nil,
+	))
+	tx.AddTxOut(wire.NewTxOut(0, nil))
+
+	if err := checkTxSanity(tx); err == nil {
+		t.Fatal("expected oversized transaction to fail sanity checks")
+	}
+}
+
+// hasTaprootScriptTest returns whether the reference script test is one of the
+// newer taproot cases embedded in script_tests.json. Those vectors rely on
+// Bitcoin Core-specific placeholder macros, while btcd covers taproot via the
+// dedicated data/taproot-ref harness in TestTaprootReferenceTests.
+func hasTaprootScriptTest(test []interface{}) bool {
+	// Account for any optional leading witness data.
+	witnessOffset := scriptTestWitnessOffset(test)
+
+	if len(test) < witnessOffset+scriptTestFlagsOffset+1 {
+		return false
+	}
+
+	flags, ok := test[witnessOffset+scriptTestFlagsOffset].(string)
+	return ok && strings.Contains(flags, "TAPROOT")
 }
 
 // parseExpectedResult parses the provided expected result string into allowed
@@ -222,6 +422,8 @@ func parseExpectedResult(expected string) ([]ErrorCode, error) {
 		return []ErrorCode{ErrEvalFalse, ErrEmptyStack}, nil
 	case "EQUALVERIFY":
 		return []ErrorCode{ErrEqualVerify}, nil
+	case "NUMEQUALVERIFY":
+		return []ErrorCode{ErrNumEqualVerify}, nil
 	case "NULLFAIL":
 		return []ErrorCode{ErrNullFail}, nil
 	case "SIG_HIGH_S":
@@ -263,6 +465,8 @@ func parseExpectedResult(expected string) ([]ErrorCode, error) {
 		return []ErrorCode{ErrInvalidSignatureCount}, nil
 	case "MINIMALDATA":
 		return []ErrorCode{ErrMinimalData}, nil
+	case "SCRIPTNUM":
+		return []ErrorCode{ErrNumberTooBig, ErrMinimalData}, nil
 	case "NEGATIVE_LOCKTIME":
 		return []ErrorCode{ErrNegativeLockTime}, nil
 	case "UNSATISFIED_LOCKTIME":
@@ -343,6 +547,13 @@ func testScripts(t *testing.T, tests [][]interface{}, useSigCache bool) {
 			continue
 		}
 
+		// Taproot entries in the latest Bitcoin Core script_tests.json rely on
+		// placeholder macros (for example #SCRIPT# and #CONTROLBLOCK#).  btcd
+		// validates taproot separately via TestTaprootReferenceTests.
+		if hasTaprootScriptTest(test) {
+			continue
+		}
+
 		// Construct a name for the test based on the comment and test
 		// data.
 		name, err := scriptTestName(test)
@@ -353,14 +564,14 @@ func testScripts(t *testing.T, tests [][]interface{}, useSigCache bool) {
 
 		var (
 			witness  wire.TxWitness
-			inputAmt btcutil.Amount
+			inputAmt int64
 		)
 
 		// When the first field of the test data is a slice it contains
 		// witness data and everything else is offset by 1 as a result.
-		witnessOffset := 0
-		if witnessData, ok := test[0].([]interface{}); ok {
-			witnessOffset++
+		witnessOffset := scriptTestWitnessOffset(test)
+		if witnessOffset != 0 {
+			witnessData := test[0].([]interface{})
 
 			// If this is a witness test, then the final element
 			// within the slice is the input amount, so we ignore
@@ -373,7 +584,9 @@ func testScripts(t *testing.T, tests [][]interface{}, useSigCache bool) {
 				continue
 			}
 
-			inputAmt, err = btcutil.NewAmount(witnessData[len(witnessData)-1].(float64))
+			inputAmt, err = newAmount(
+				witnessData[len(witnessData)-1].(float64),
+			)
 			if err != nil {
 				t.Errorf("%s: can't parse input amt: %v",
 					name, err)
@@ -383,7 +596,8 @@ func testScripts(t *testing.T, tests [][]interface{}, useSigCache bool) {
 		}
 
 		// Extract and parse the signature script from the test fields.
-		scriptSigStr, ok := test[witnessOffset].(string)
+		scriptSigIdx := witnessOffset + scriptTestSigScriptOffset
+		scriptSigStr, ok := test[scriptSigIdx].(string)
 		if !ok {
 			t.Errorf("%s: signature script is not a string", name)
 			continue
@@ -396,7 +610,8 @@ func testScripts(t *testing.T, tests [][]interface{}, useSigCache bool) {
 		}
 
 		// Extract and parse the public key script from the test fields.
-		scriptPubKeyStr, ok := test[witnessOffset+1].(string)
+		scriptPubKeyIdx := witnessOffset + scriptTestPkScriptOffset
+		scriptPubKeyStr, ok := test[scriptPubKeyIdx].(string)
 		if !ok {
 			t.Errorf("%s: public key script is not a string", name)
 			continue
@@ -409,7 +624,8 @@ func testScripts(t *testing.T, tests [][]interface{}, useSigCache bool) {
 		}
 
 		// Extract and parse the script flags from the test fields.
-		flagsStr, ok := test[witnessOffset+2].(string)
+		flagsIdx := witnessOffset + scriptTestFlagsOffset
+		flagsStr, ok := test[flagsIdx].(string)
 		if !ok {
 			t.Errorf("%s: flags field is not a string", name)
 			continue
@@ -427,7 +643,8 @@ func testScripts(t *testing.T, tests [][]interface{}, useSigCache bool) {
 		// fine grained with its errors than the reference test data, so
 		// some of the reference test data errors map to more than one
 		// possibility.
-		resultStr, ok := test[witnessOffset+3].(string)
+		resultIdx := witnessOffset + scriptTestExpectedOffset
+		resultStr, ok := test[resultIdx].(string)
 		if !ok {
 			t.Errorf("%s: result field is not a string", name)
 			continue
@@ -441,10 +658,14 @@ func testScripts(t *testing.T, tests [][]interface{}, useSigCache bool) {
 		// Generate a transaction pair such that one spends from the
 		// other and the provided signature and public key scripts are
 		// used, then create a new engine to execute the scripts.
-		tx := createSpendingTx(witness, scriptSig, scriptPubKey,
-			int64(inputAmt))
-		vm, err := NewEngine(scriptPubKey, tx, 0, flags, sigCache, nil,
-			int64(inputAmt))
+		tx := createSpendingTx(
+			witness, scriptSig, scriptPubKey, int64(inputAmt),
+		)
+		prevOuts := NewCannedPrevOutputFetcher(scriptPubKey, int64(inputAmt))
+		vm, err := NewEngine(
+			scriptPubKey, tx, 0, flags, sigCache, nil,
+			int64(inputAmt), prevOuts,
+		)
 		if err == nil {
 			err = vm.Execute()
 		}
@@ -482,7 +703,7 @@ func testScripts(t *testing.T, tests [][]interface{}, useSigCache bool) {
 // TestScripts ensures all of the tests in script_tests.json execute with the
 // expected results as defined in the test data.
 func TestScripts(t *testing.T) {
-	file, err := ioutil.ReadFile("data/script_tests.json")
+	file, err := os.ReadFile("data/script_tests.json")
 	if err != nil {
 		t.Fatalf("TestScripts: %v\n", err)
 	}
@@ -513,7 +734,7 @@ func testVecF64ToUint32(f float64) uint32 {
 // TestTxInvalidTests ensures all of the tests in tx_invalid.json fail as
 // expected.
 func TestTxInvalidTests(t *testing.T) {
-	file, err := ioutil.ReadFile("data/tx_invalid.json")
+	file, err := os.ReadFile("data/tx_invalid.json")
 	if err != nil {
 		t.Fatalf("TestTxInvalidTests: %v\n", err)
 	}
@@ -553,7 +774,7 @@ testloop:
 			continue
 		}
 
-		tx, err := btcutil.NewTxFromBytes(serializedTx)
+		tx, err := newTxFromBytes(serializedTx)
 		if err != nil {
 			t.Errorf("bad test (arg 2 not msgtx %v) %d: %v", err,
 				i, test)
@@ -566,13 +787,22 @@ testloop:
 			continue
 		}
 
-		flags, err := parseScriptFlags(verifyFlags)
+		flags, badTx, err := parseTxInvalidTestFlags(verifyFlags)
 		if err != nil {
 			t.Errorf("bad test %d: %v", i, err)
 			continue
 		}
+		if badTx {
+			if err := checkTxSanity(tx); err != nil {
+				continue
+			}
 
-		prevOuts := make(map[wire.OutPoint]scriptWithInputVal)
+			t.Errorf("test (%d:%v) passed sanity when should fail",
+				i, test)
+			continue
+		}
+
+		prevOutFetcher := NewMultiPrevOutFetcher(nil)
 		for j, iinput := range inputs {
 			input, ok := iinput.([]interface{})
 			if !ok {
@@ -633,16 +863,18 @@ testloop:
 				}
 			}
 
-			v := scriptWithInputVal{
-				inputVal: int64(inputValue),
-				pkScript: script,
-			}
-			prevOuts[*wire.NewOutPoint(prevhash, idx)] = v
+			op := wire.NewOutPoint(prevhash, idx)
+			prevOutFetcher.AddPrevOut(*op, &wire.TxOut{
+				Value:    int64(inputValue),
+				PkScript: script,
+			})
 		}
 
-		for k, txin := range tx.MsgTx().TxIn {
-			prevOut, ok := prevOuts[txin.PreviousOutPoint]
-			if !ok {
+		for k, txin := range tx.TxIn {
+			prevOut := prevOutFetcher.FetchPrevOutput(
+				txin.PreviousOutPoint,
+			)
+			if prevOut == nil {
 				t.Errorf("bad test (missing %dth input) %d:%v",
 					k, i, test)
 				continue testloop
@@ -650,8 +882,8 @@ testloop:
 			// These are meant to fail, so as soon as the first
 			// input fails the transaction has failed. (some of the
 			// test txns have good inputs, too..
-			vm, err := NewEngine(prevOut.pkScript, tx.MsgTx(), k,
-				flags, nil, nil, prevOut.inputVal)
+			vm, err := NewEngine(prevOut.PkScript, tx, k,
+				flags, nil, nil, prevOut.Value, prevOutFetcher)
 			if err != nil {
 				continue testloop
 			}
@@ -669,7 +901,7 @@ testloop:
 
 // TestTxValidTests ensures all of the tests in tx_valid.json pass as expected.
 func TestTxValidTests(t *testing.T) {
-	file, err := ioutil.ReadFile("data/tx_valid.json")
+	file, err := os.ReadFile("data/tx_valid.json")
 	if err != nil {
 		t.Fatalf("TestTxValidTests: %v\n", err)
 	}
@@ -708,7 +940,7 @@ testloop:
 			continue
 		}
 
-		tx, err := btcutil.NewTxFromBytes(serializedTx)
+		tx, err := newTxFromBytes(serializedTx)
 		if err != nil {
 			t.Errorf("bad test (arg 2 not msgtx %v) %d: %v", err,
 				i, test)
@@ -721,13 +953,13 @@ testloop:
 			continue
 		}
 
-		flags, err := parseScriptFlags(verifyFlags)
+		flags, err := parseTxValidTestFlags(verifyFlags)
 		if err != nil {
 			t.Errorf("bad test %d: %v", i, err)
 			continue
 		}
 
-		prevOuts := make(map[wire.OutPoint]scriptWithInputVal)
+		prevOutFetcher := NewMultiPrevOutFetcher(nil)
 		for j, iinput := range inputs {
 			input, ok := iinput.([]interface{})
 			if !ok {
@@ -788,22 +1020,24 @@ testloop:
 				}
 			}
 
-			v := scriptWithInputVal{
-				inputVal: int64(inputValue),
-				pkScript: script,
-			}
-			prevOuts[*wire.NewOutPoint(prevhash, idx)] = v
+			op := wire.NewOutPoint(prevhash, idx)
+			prevOutFetcher.AddPrevOut(*op, &wire.TxOut{
+				Value:    int64(inputValue),
+				PkScript: script,
+			})
 		}
 
-		for k, txin := range tx.MsgTx().TxIn {
-			prevOut, ok := prevOuts[txin.PreviousOutPoint]
-			if !ok {
+		for k, txin := range tx.TxIn {
+			prevOut := prevOutFetcher.FetchPrevOutput(
+				txin.PreviousOutPoint,
+			)
+			if prevOut == nil {
 				t.Errorf("bad test (missing %dth input) %d:%v",
 					k, i, test)
 				continue testloop
 			}
-			vm, err := NewEngine(prevOut.pkScript, tx.MsgTx(), k,
-				flags, nil, nil, prevOut.inputVal)
+			vm, err := NewEngine(prevOut.PkScript, tx, k,
+				flags, nil, nil, prevOut.Value, prevOutFetcher)
 			if err != nil {
 				t.Errorf("test (%d:%v:%d) failed to create "+
 					"script: %v", i, test, k, err)
@@ -824,7 +1058,7 @@ testloop:
 // in sighash.json.
 // https://github.com/bitcoin/bitcoin/blob/master/src/test/data/sighash.json
 func TestCalcSignatureHash(t *testing.T) {
-	file, err := ioutil.ReadFile("data/sighash.json")
+	file, err := os.ReadFile("data/sighash.json")
 	if err != nil {
 		t.Fatalf("TestCalcSignatureHash: %v\n", err)
 	}
@@ -836,6 +1070,7 @@ func TestCalcSignatureHash(t *testing.T) {
 			err)
 	}
 
+	const scriptVersion = 0
 	for i, test := range tests {
 		if i == 0 {
 			// Skip first line -- contains comments only.
@@ -855,16 +1090,20 @@ func TestCalcSignatureHash(t *testing.T) {
 		}
 
 		subScript, _ := hex.DecodeString(test[1].(string))
-		parsedScript, err := parseScript(subScript)
-		if err != nil {
+		if err := checkScriptParses(scriptVersion, subScript); err != nil {
 			t.Errorf("TestCalcSignatureHash failed test #%d: "+
 				"Failed to parse sub-script: %v", i, err)
 			continue
 		}
 
 		hashType := SigHashType(testVecF64ToUint32(test[3].(float64)))
-		hash := calcSignatureHash(parsedScript, hashType, &tx,
+		hash, err := CalcSignatureHash(subScript, hashType, &tx,
 			int(test[2].(float64)))
+		if err != nil {
+			t.Errorf("TestCalcSignatureHash failed test #%d: "+
+				"Failed to compute sighash: %v", i, err)
+			continue
+		}
 
 		expectedHash, _ := chainhash.NewHashFromStr(test[4].(string))
 		if !bytes.Equal(hash, expectedHash[:]) {
@@ -872,4 +1111,222 @@ func TestCalcSignatureHash(t *testing.T) {
 				"Signature hash mismatch.", i)
 		}
 	}
+}
+
+type inputWitness struct {
+	ScriptSig string   `json:"scriptSig"`
+	Witness   []string `json:"witness"`
+}
+
+type taprootJsonTest struct {
+	Tx       string   `json:"tx"`
+	Prevouts []string `json:"prevouts"`
+	Index    int      `json:"index"`
+	Flags    string   `json:"flags"`
+
+	Comment string `json:"comment"`
+
+	Success *inputWitness `json:"success"`
+
+	Failure *inputWitness `json:"failure"`
+}
+
+func executeTaprootRefTest(t *testing.T, testCase taprootJsonTest) {
+	t.Helper()
+
+	txHex, err := hex.DecodeString(testCase.Tx)
+	if err != nil {
+		t.Fatalf("unable to decode hex: %v", err)
+	}
+	tx, err := newTxFromBytes(txHex)
+	if err != nil {
+		t.Fatalf("unable to decode hex: %v", err)
+	}
+
+	var prevOut wire.TxOut
+
+	prevOutFetcher := NewMultiPrevOutFetcher(nil)
+	for i, prevOutString := range testCase.Prevouts {
+		prevOutBytes, err := hex.DecodeString(prevOutString)
+		if err != nil {
+			t.Fatalf("unable to decode hex: %v", err)
+		}
+
+		var txOut wire.TxOut
+		err = wire.ReadTxOut(
+			bytes.NewReader(prevOutBytes), 0, 0, &txOut,
+		)
+		if err != nil {
+			t.Fatalf("unable to read utxo: %v", err)
+		}
+
+		prevOutFetcher.AddPrevOut(
+			tx.TxIn[i].PreviousOutPoint, &txOut,
+		)
+
+		if i == testCase.Index {
+			prevOut = txOut
+		}
+	}
+
+	flags, err := parseScriptFlags(testCase.Flags)
+	if err != nil {
+		t.Fatalf("unable to parse flags: %v", err)
+	}
+
+	makeVM := func() *Engine {
+		hashCache := NewTxSigHashes(tx, prevOutFetcher)
+
+		vm, err := NewEngine(
+			prevOut.PkScript, tx, testCase.Index,
+			flags, nil, hashCache, prevOut.Value, prevOutFetcher,
+		)
+		if err != nil {
+			t.Fatalf("unable to create vm: %v", err)
+		}
+
+		return vm
+	}
+
+	if testCase.Success != nil {
+		tx.TxIn[testCase.Index].SignatureScript, err = hex.DecodeString(
+			testCase.Success.ScriptSig,
+		)
+		if err != nil {
+			t.Fatalf("unable to parse sig script: %v", err)
+		}
+
+		var witness [][]byte
+		for _, witnessStr := range testCase.Success.Witness {
+			witElem, err := hex.DecodeString(witnessStr)
+			if err != nil {
+				t.Fatalf("unable to parse witness stack: %v", err)
+			}
+
+			witness = append(witness, witElem)
+		}
+
+		tx.TxIn[testCase.Index].Witness = witness
+
+		vm := makeVM()
+
+		err = vm.Execute()
+		if err != nil {
+			t.Fatalf("test (%v) failed to execute: "+
+				"%v", testCase.Comment, err)
+		}
+	}
+
+	if testCase.Failure != nil {
+		tx.TxIn[testCase.Index].SignatureScript, err = hex.DecodeString(
+			testCase.Failure.ScriptSig,
+		)
+		if err != nil {
+			t.Fatalf("unable to parse sig script: %v", err)
+		}
+
+		var witness [][]byte
+		for _, witnessStr := range testCase.Failure.Witness {
+			witElem, err := hex.DecodeString(witnessStr)
+			if err != nil {
+				t.Fatalf("unable to parse witness stack: %v", err)
+			}
+
+			witness = append(witness, witElem)
+		}
+
+		tx.TxIn[testCase.Index].Witness = witness
+
+		vm := makeVM()
+
+		err = vm.Execute()
+		if err == nil {
+			t.Fatalf("test (%v) succeeded, should fail: "+
+				"%v", testCase.Comment, err)
+		}
+	}
+}
+
+// TestTaprootReferenceTests test that we're able to properly validate (success
+// and failure paths for each test) the set of functional generative tests
+// created by the bitcoind project for taproot at:
+// https://github.com/bitcoin/bitcoin/blob/master/test/functional/feature_taproot.py.
+func TestTaprootReferenceTests(t *testing.T) {
+	t.Parallel()
+
+	filePath := "data/taproot-ref"
+
+	testFunc := func(path string, info fs.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+
+		if info.IsDir() {
+			t.Logf("skipping dir: %v", info.Name())
+			return nil
+		}
+
+		testJson, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("unable to read file: %v", err)
+		}
+
+		// All the JSON files have a trailing comma and a new line
+		// character, so we'll remove that here before attempting to
+		// parse it.
+		testJson = bytes.TrimSuffix(testJson, []byte(",\n"))
+
+		var testCase taprootJsonTest
+		if err := json.Unmarshal(testJson, &testCase); err != nil {
+			return fmt.Errorf("unable to decode json: %v", err)
+		}
+
+		testName := fmt.Sprintf(
+			"%v:%v", testCase.Comment, filepath.Base(path),
+		)
+		_ = t.Run(testName, func(t *testing.T) {
+			t.Parallel()
+
+			executeTaprootRefTest(t, testCase)
+		})
+
+		return nil
+	}
+
+	err := filepath.Walk(filePath, testFunc)
+	if err != nil {
+		t.Fatalf("unable to execute taproot test vectors: %v", err)
+	}
+}
+
+func newAmount(f float64) (int64, error) {
+	// The amount is only considered invalid if it cannot be represented
+	// as an integer type.  This may happen if f is NaN or +-Infinity.
+	switch {
+	case math.IsNaN(f):
+		fallthrough
+	case math.IsInf(f, 1):
+		fallthrough
+	case math.IsInf(f, -1):
+		return 0, errors.New("invalid bitcoin amount")
+	}
+
+	return round(f * 1e8), nil
+}
+
+func round(f float64) int64 {
+	if f < 0 {
+		return int64(f - 0.5)
+	}
+	return int64(f + 0.5)
+}
+
+func newTxFromBytes(txBytes []byte) (*wire.MsgTx, error) {
+	var msgTx wire.MsgTx
+	err := msgTx.Deserialize(bytes.NewReader(txBytes))
+	if err != nil {
+		return nil, err
+	}
+
+	return &msgTx, nil
 }

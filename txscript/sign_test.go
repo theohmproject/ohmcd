@@ -9,11 +9,14 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcec"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
+	"github.com/btcsuite/btcd/address/v2"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/wire/v2"
+	"github.com/stretchr/testify/require"
 )
 
 type addressToKey struct {
@@ -23,12 +26,12 @@ type addressToKey struct {
 
 func mkGetKey(keys map[string]addressToKey) KeyDB {
 	if keys == nil {
-		return KeyClosure(func(addr btcutil.Address) (*btcec.PrivateKey,
+		return KeyClosure(func(addr address.Address) (*btcec.PrivateKey,
 			bool, error) {
 			return nil, false, errors.New("nope")
 		})
 	}
-	return KeyClosure(func(addr btcutil.Address) (*btcec.PrivateKey,
+	return KeyClosure(func(addr address.Address) (*btcec.PrivateKey,
 		bool, error) {
 		a2k, ok := keys[addr.EncodeAddress()]
 		if !ok {
@@ -40,11 +43,11 @@ func mkGetKey(keys map[string]addressToKey) KeyDB {
 
 func mkGetScript(scripts map[string][]byte) ScriptDB {
 	if scripts == nil {
-		return ScriptClosure(func(addr btcutil.Address) ([]byte, error) {
+		return ScriptClosure(func(addr address.Address) ([]byte, error) {
 			return nil, errors.New("nope")
 		})
 	}
-	return ScriptClosure(func(addr btcutil.Address) ([]byte, error) {
+	return ScriptClosure(func(addr address.Address) ([]byte, error) {
 		script, ok := scripts[addr.EncodeAddress()]
 		if !ok {
 			return nil, errors.New("nope")
@@ -56,7 +59,7 @@ func mkGetScript(scripts map[string][]byte) ScriptDB {
 func checkScripts(msg string, tx *wire.MsgTx, idx int, inputAmt int64, sigScript, pkScript []byte) error {
 	tx.TxIn[idx].SignatureScript = sigScript
 	vm, err := NewEngine(pkScript, tx, idx,
-		ScriptBip16|ScriptVerifyDERSignatures, nil, nil, inputAmt)
+		ScriptBip16|ScriptVerifyDERSignatures, nil, nil, inputAmt, nil)
 	if err != nil {
 		return fmt.Errorf("failed to make script engine for %s: %v",
 			msg, err)
@@ -143,17 +146,16 @@ func TestSignTxOutput(t *testing.T) {
 	for _, hashType := range hashTypes {
 		for i := range tx.TxIn {
 			msg := fmt.Sprintf("%d:%d", hashType, i)
-			key, err := btcec.NewPrivateKey(btcec.S256())
+			key, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk := (*btcec.PublicKey)(&key.PublicKey).
-				SerializeUncompressed()
-			address, err := btcutil.NewAddressPubKeyHash(
-				btcutil.Hash160(pk), &chaincfg.TestNet3Params)
+			pk := key.PubKey().SerializeUncompressed()
+			address, err := address.NewAddressPubKeyHash(
+				address.Hash160(pk), &chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -180,17 +182,16 @@ func TestSignTxOutput(t *testing.T) {
 	for _, hashType := range hashTypes {
 		for i := range tx.TxIn {
 			msg := fmt.Sprintf("%d:%d", hashType, i)
-			key, err := btcec.NewPrivateKey(btcec.S256())
+			key, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk := (*btcec.PublicKey)(&key.PublicKey).
-				SerializeUncompressed()
-			address, err := btcutil.NewAddressPubKeyHash(
-				btcutil.Hash160(pk), &chaincfg.TestNet3Params)
+			pk := key.PubKey().SerializeUncompressed()
+			address, err := address.NewAddressPubKeyHash(
+				address.Hash160(pk), &chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -241,17 +242,16 @@ func TestSignTxOutput(t *testing.T) {
 		for i := range tx.TxIn {
 			msg := fmt.Sprintf("%d:%d", hashType, i)
 
-			key, err := btcec.NewPrivateKey(btcec.S256())
+			key, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk := (*btcec.PublicKey)(&key.PublicKey).
-				SerializeCompressed()
-			address, err := btcutil.NewAddressPubKeyHash(
-				btcutil.Hash160(pk), &chaincfg.TestNet3Params)
+			pk := key.PubKey().SerializeCompressed()
+			address, err := address.NewAddressPubKeyHash(
+				address.Hash160(pk), &chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -280,17 +280,16 @@ func TestSignTxOutput(t *testing.T) {
 		for i := range tx.TxIn {
 			msg := fmt.Sprintf("%d:%d", hashType, i)
 
-			key, err := btcec.NewPrivateKey(btcec.S256())
+			key, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk := (*btcec.PublicKey)(&key.PublicKey).
-				SerializeCompressed()
-			address, err := btcutil.NewAddressPubKeyHash(
-				btcutil.Hash160(pk), &chaincfg.TestNet3Params)
+			pk := key.PubKey().SerializeCompressed()
+			address, err := address.NewAddressPubKeyHash(
+				address.Hash160(pk), &chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
@@ -342,16 +341,15 @@ func TestSignTxOutput(t *testing.T) {
 		for i := range tx.TxIn {
 			msg := fmt.Sprintf("%d:%d", hashType, i)
 
-			key, err := btcec.NewPrivateKey(btcec.S256())
+			key, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk := (*btcec.PublicKey)(&key.PublicKey).
-				SerializeUncompressed()
-			address, err := btcutil.NewAddressPubKey(pk,
+			pk := key.PubKey().SerializeUncompressed()
+			address, err := address.NewAddressPubKey(pk,
 				&chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
@@ -381,16 +379,15 @@ func TestSignTxOutput(t *testing.T) {
 		for i := range tx.TxIn {
 			msg := fmt.Sprintf("%d:%d", hashType, i)
 
-			key, err := btcec.NewPrivateKey(btcec.S256())
+			key, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk := (*btcec.PublicKey)(&key.PublicKey).
-				SerializeUncompressed()
-			address, err := btcutil.NewAddressPubKey(pk,
+			pk := key.PubKey().SerializeUncompressed()
+			address, err := address.NewAddressPubKey(pk,
 				&chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
@@ -442,16 +439,15 @@ func TestSignTxOutput(t *testing.T) {
 		for i := range tx.TxIn {
 			msg := fmt.Sprintf("%d:%d", hashType, i)
 
-			key, err := btcec.NewPrivateKey(btcec.S256())
+			key, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk := (*btcec.PublicKey)(&key.PublicKey).
-				SerializeCompressed()
-			address, err := btcutil.NewAddressPubKey(pk,
+			pk := key.PubKey().SerializeCompressed()
+			address, err := address.NewAddressPubKey(pk,
 				&chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
@@ -481,16 +477,15 @@ func TestSignTxOutput(t *testing.T) {
 		for i := range tx.TxIn {
 			msg := fmt.Sprintf("%d:%d", hashType, i)
 
-			key, err := btcec.NewPrivateKey(btcec.S256())
+			key, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk := (*btcec.PublicKey)(&key.PublicKey).
-				SerializeCompressed()
-			address, err := btcutil.NewAddressPubKey(pk,
+			pk := key.PubKey().SerializeCompressed()
+			address, err := address.NewAddressPubKey(pk,
 				&chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
@@ -543,31 +538,30 @@ func TestSignTxOutput(t *testing.T) {
 	for _, hashType := range hashTypes {
 		for i := range tx.TxIn {
 			msg := fmt.Sprintf("%d:%d", hashType, i)
-			key, err := btcec.NewPrivateKey(btcec.S256())
+			key, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk := (*btcec.PublicKey)(&key.PublicKey).
-				SerializeUncompressed()
-			address, err := btcutil.NewAddressPubKeyHash(
-				btcutil.Hash160(pk), &chaincfg.TestNet3Params)
+			pk := key.PubKey().SerializeUncompressed()
+			addr, err := address.NewAddressPubKeyHash(
+				address.Hash160(pk), &chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
 				break
 			}
 
-			pkScript, err := PayToAddrScript(address)
+			pkScript, err := PayToAddrScript(addr)
 			if err != nil {
 				t.Errorf("failed to make pkscript "+
 					"for %s: %v", msg, err)
 				break
 			}
 
-			scriptAddr, err := btcutil.NewAddressScriptHash(
+			scriptAddr, err := address.NewAddressScriptHash(
 				pkScript, &chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
@@ -586,7 +580,7 @@ func TestSignTxOutput(t *testing.T) {
 			if err := signAndCheck(msg, tx, i, inputAmounts[i],
 				scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
-					address.EncodeAddress(): {key, false},
+					addr.EncodeAddress(): {key, false},
 				}), mkGetScript(map[string][]byte{
 					scriptAddr.EncodeAddress(): pkScript,
 				}), nil); err != nil {
@@ -600,31 +594,30 @@ func TestSignTxOutput(t *testing.T) {
 	for _, hashType := range hashTypes {
 		for i := range tx.TxIn {
 			msg := fmt.Sprintf("%d:%d", hashType, i)
-			key, err := btcec.NewPrivateKey(btcec.S256())
+			key, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk := (*btcec.PublicKey)(&key.PublicKey).
-				SerializeUncompressed()
-			address, err := btcutil.NewAddressPubKeyHash(
-				btcutil.Hash160(pk), &chaincfg.TestNet3Params)
+			pk := key.PubKey().SerializeUncompressed()
+			addr, err := address.NewAddressPubKeyHash(
+				address.Hash160(pk), &chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
 				break
 			}
 
-			pkScript, err := PayToAddrScript(address)
+			pkScript, err := PayToAddrScript(addr)
 			if err != nil {
 				t.Errorf("failed to make pkscript "+
 					"for %s: %v", msg, err)
 				break
 			}
 
-			scriptAddr, err := btcutil.NewAddressScriptHash(
+			scriptAddr, err := address.NewAddressScriptHash(
 				pkScript, &chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
@@ -643,7 +636,7 @@ func TestSignTxOutput(t *testing.T) {
 			sigScript, err := SignTxOutput(&chaincfg.TestNet3Params,
 				tx, i, scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
-					address.EncodeAddress(): {key, false},
+					addr.EncodeAddress(): {key, false},
 				}), mkGetScript(map[string][]byte{
 					scriptAddr.EncodeAddress(): pkScript,
 				}), nil)
@@ -658,7 +651,7 @@ func TestSignTxOutput(t *testing.T) {
 			sigScript, err = SignTxOutput(&chaincfg.TestNet3Params,
 				tx, i, scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
-					address.EncodeAddress(): {key, false},
+					addr.EncodeAddress(): {key, false},
 				}), mkGetScript(map[string][]byte{
 					scriptAddr.EncodeAddress(): pkScript,
 				}), nil)
@@ -683,30 +676,29 @@ func TestSignTxOutput(t *testing.T) {
 		for i := range tx.TxIn {
 			msg := fmt.Sprintf("%d:%d", hashType, i)
 
-			key, err := btcec.NewPrivateKey(btcec.S256())
+			key, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk := (*btcec.PublicKey)(&key.PublicKey).
-				SerializeCompressed()
-			address, err := btcutil.NewAddressPubKeyHash(
-				btcutil.Hash160(pk), &chaincfg.TestNet3Params)
+			pk := key.PubKey().SerializeCompressed()
+			addr, err := address.NewAddressPubKeyHash(
+				address.Hash160(pk), &chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
 				break
 			}
 
-			pkScript, err := PayToAddrScript(address)
+			pkScript, err := PayToAddrScript(addr)
 			if err != nil {
 				t.Errorf("failed to make pkscript "+
 					"for %s: %v", msg, err)
 			}
 
-			scriptAddr, err := btcutil.NewAddressScriptHash(
+			scriptAddr, err := address.NewAddressScriptHash(
 				pkScript, &chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
@@ -725,7 +717,7 @@ func TestSignTxOutput(t *testing.T) {
 			if err := signAndCheck(msg, tx, i, inputAmounts[i],
 				scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
-					address.EncodeAddress(): {key, true},
+					addr.EncodeAddress(): {key, true},
 				}), mkGetScript(map[string][]byte{
 					scriptAddr.EncodeAddress(): pkScript,
 				}), nil); err != nil {
@@ -740,30 +732,29 @@ func TestSignTxOutput(t *testing.T) {
 		for i := range tx.TxIn {
 			msg := fmt.Sprintf("%d:%d", hashType, i)
 
-			key, err := btcec.NewPrivateKey(btcec.S256())
+			key, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk := (*btcec.PublicKey)(&key.PublicKey).
-				SerializeCompressed()
-			address, err := btcutil.NewAddressPubKeyHash(
-				btcutil.Hash160(pk), &chaincfg.TestNet3Params)
+			pk := key.PubKey().SerializeCompressed()
+			addr, err := address.NewAddressPubKeyHash(
+				address.Hash160(pk), &chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
 					msg, err)
 				break
 			}
 
-			pkScript, err := PayToAddrScript(address)
+			pkScript, err := PayToAddrScript(addr)
 			if err != nil {
 				t.Errorf("failed to make pkscript "+
 					"for %s: %v", msg, err)
 			}
 
-			scriptAddr, err := btcutil.NewAddressScriptHash(
+			scriptAddr, err := address.NewAddressScriptHash(
 				pkScript, &chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
@@ -782,7 +773,7 @@ func TestSignTxOutput(t *testing.T) {
 			sigScript, err := SignTxOutput(&chaincfg.TestNet3Params,
 				tx, i, scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
-					address.EncodeAddress(): {key, true},
+					addr.EncodeAddress(): {key, true},
 				}), mkGetScript(map[string][]byte{
 					scriptAddr.EncodeAddress(): pkScript,
 				}), nil)
@@ -797,7 +788,7 @@ func TestSignTxOutput(t *testing.T) {
 			sigScript, err = SignTxOutput(&chaincfg.TestNet3Params,
 				tx, i, scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
-					address.EncodeAddress(): {key, true},
+					addr.EncodeAddress(): {key, true},
 				}), mkGetScript(map[string][]byte{
 					scriptAddr.EncodeAddress(): pkScript,
 				}), nil)
@@ -822,16 +813,15 @@ func TestSignTxOutput(t *testing.T) {
 		for i := range tx.TxIn {
 			msg := fmt.Sprintf("%d:%d", hashType, i)
 
-			key, err := btcec.NewPrivateKey(btcec.S256())
+			key, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk := (*btcec.PublicKey)(&key.PublicKey).
-				SerializeUncompressed()
-			address, err := btcutil.NewAddressPubKey(pk,
+			pk := key.PubKey().SerializeUncompressed()
+			addr, err := address.NewAddressPubKey(pk,
 				&chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
@@ -839,13 +829,13 @@ func TestSignTxOutput(t *testing.T) {
 				break
 			}
 
-			pkScript, err := PayToAddrScript(address)
+			pkScript, err := PayToAddrScript(addr)
 			if err != nil {
 				t.Errorf("failed to make pkscript "+
 					"for %s: %v", msg, err)
 			}
 
-			scriptAddr, err := btcutil.NewAddressScriptHash(
+			scriptAddr, err := address.NewAddressScriptHash(
 				pkScript, &chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
@@ -864,7 +854,7 @@ func TestSignTxOutput(t *testing.T) {
 			if err := signAndCheck(msg, tx, i, inputAmounts[i],
 				scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
-					address.EncodeAddress(): {key, false},
+					addr.EncodeAddress(): {key, false},
 				}), mkGetScript(map[string][]byte{
 					scriptAddr.EncodeAddress(): pkScript,
 				}), nil); err != nil {
@@ -879,16 +869,15 @@ func TestSignTxOutput(t *testing.T) {
 		for i := range tx.TxIn {
 			msg := fmt.Sprintf("%d:%d", hashType, i)
 
-			key, err := btcec.NewPrivateKey(btcec.S256())
+			key, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk := (*btcec.PublicKey)(&key.PublicKey).
-				SerializeUncompressed()
-			address, err := btcutil.NewAddressPubKey(pk,
+			pk := key.PubKey().SerializeUncompressed()
+			addr, err := address.NewAddressPubKey(pk,
 				&chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
@@ -896,13 +885,13 @@ func TestSignTxOutput(t *testing.T) {
 				break
 			}
 
-			pkScript, err := PayToAddrScript(address)
+			pkScript, err := PayToAddrScript(addr)
 			if err != nil {
 				t.Errorf("failed to make pkscript "+
 					"for %s: %v", msg, err)
 			}
 
-			scriptAddr, err := btcutil.NewAddressScriptHash(
+			scriptAddr, err := address.NewAddressScriptHash(
 				pkScript, &chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
@@ -920,7 +909,7 @@ func TestSignTxOutput(t *testing.T) {
 			sigScript, err := SignTxOutput(&chaincfg.TestNet3Params,
 				tx, i, scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
-					address.EncodeAddress(): {key, false},
+					addr.EncodeAddress(): {key, false},
 				}), mkGetScript(map[string][]byte{
 					scriptAddr.EncodeAddress(): pkScript,
 				}), nil)
@@ -935,7 +924,7 @@ func TestSignTxOutput(t *testing.T) {
 			sigScript, err = SignTxOutput(&chaincfg.TestNet3Params,
 				tx, i, scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
-					address.EncodeAddress(): {key, false},
+					addr.EncodeAddress(): {key, false},
 				}), mkGetScript(map[string][]byte{
 					scriptAddr.EncodeAddress(): pkScript,
 				}), nil)
@@ -960,16 +949,15 @@ func TestSignTxOutput(t *testing.T) {
 		for i := range tx.TxIn {
 			msg := fmt.Sprintf("%d:%d", hashType, i)
 
-			key, err := btcec.NewPrivateKey(btcec.S256())
+			key, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk := (*btcec.PublicKey)(&key.PublicKey).
-				SerializeCompressed()
-			address, err := btcutil.NewAddressPubKey(pk,
+			pk := key.PubKey().SerializeCompressed()
+			addr, err := address.NewAddressPubKey(pk,
 				&chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
@@ -977,13 +965,13 @@ func TestSignTxOutput(t *testing.T) {
 				break
 			}
 
-			pkScript, err := PayToAddrScript(address)
+			pkScript, err := PayToAddrScript(addr)
 			if err != nil {
 				t.Errorf("failed to make pkscript "+
 					"for %s: %v", msg, err)
 			}
 
-			scriptAddr, err := btcutil.NewAddressScriptHash(
+			scriptAddr, err := address.NewAddressScriptHash(
 				pkScript, &chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
@@ -1001,7 +989,7 @@ func TestSignTxOutput(t *testing.T) {
 			if err := signAndCheck(msg, tx, i, inputAmounts[i],
 				scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
-					address.EncodeAddress(): {key, true},
+					addr.EncodeAddress(): {key, true},
 				}), mkGetScript(map[string][]byte{
 					scriptAddr.EncodeAddress(): pkScript,
 				}), nil); err != nil {
@@ -1016,16 +1004,15 @@ func TestSignTxOutput(t *testing.T) {
 		for i := range tx.TxIn {
 			msg := fmt.Sprintf("%d:%d", hashType, i)
 
-			key, err := btcec.NewPrivateKey(btcec.S256())
+			key, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk := (*btcec.PublicKey)(&key.PublicKey).
-				SerializeCompressed()
-			address, err := btcutil.NewAddressPubKey(pk,
+			pk := key.PubKey().SerializeCompressed()
+			addr, err := address.NewAddressPubKey(pk,
 				&chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
@@ -1033,13 +1020,13 @@ func TestSignTxOutput(t *testing.T) {
 				break
 			}
 
-			pkScript, err := PayToAddrScript(address)
+			pkScript, err := PayToAddrScript(addr)
 			if err != nil {
 				t.Errorf("failed to make pkscript "+
 					"for %s: %v", msg, err)
 			}
 
-			scriptAddr, err := btcutil.NewAddressScriptHash(
+			scriptAddr, err := address.NewAddressScriptHash(
 				pkScript, &chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
@@ -1057,7 +1044,7 @@ func TestSignTxOutput(t *testing.T) {
 			sigScript, err := SignTxOutput(&chaincfg.TestNet3Params,
 				tx, i, scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
-					address.EncodeAddress(): {key, true},
+					addr.EncodeAddress(): {key, true},
 				}), mkGetScript(map[string][]byte{
 					scriptAddr.EncodeAddress(): pkScript,
 				}), nil)
@@ -1072,7 +1059,7 @@ func TestSignTxOutput(t *testing.T) {
 			sigScript, err = SignTxOutput(&chaincfg.TestNet3Params,
 				tx, i, scriptPkScript, hashType,
 				mkGetKey(map[string]addressToKey{
-					address.EncodeAddress(): {key, true},
+					addr.EncodeAddress(): {key, true},
 				}), mkGetScript(map[string][]byte{
 					scriptAddr.EncodeAddress(): pkScript,
 				}), nil)
@@ -1097,16 +1084,15 @@ func TestSignTxOutput(t *testing.T) {
 		for i := range tx.TxIn {
 			msg := fmt.Sprintf("%d:%d", hashType, i)
 
-			key1, err := btcec.NewPrivateKey(btcec.S256())
+			key1, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk1 := (*btcec.PublicKey)(&key1.PublicKey).
-				SerializeCompressed()
-			address1, err := btcutil.NewAddressPubKey(pk1,
+			pk1 := key1.PubKey().SerializeCompressed()
+			address1, err := address.NewAddressPubKey(pk1,
 				&chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
@@ -1114,16 +1100,15 @@ func TestSignTxOutput(t *testing.T) {
 				break
 			}
 
-			key2, err := btcec.NewPrivateKey(btcec.S256())
+			key2, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey 2 for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk2 := (*btcec.PublicKey)(&key2.PublicKey).
-				SerializeCompressed()
-			address2, err := btcutil.NewAddressPubKey(pk2,
+			pk2 := key2.PubKey().SerializeCompressed()
+			address2, err := address.NewAddressPubKey(pk2,
 				&chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address 2 for %s: %v",
@@ -1132,14 +1117,14 @@ func TestSignTxOutput(t *testing.T) {
 			}
 
 			pkScript, err := MultiSigScript(
-				[]*btcutil.AddressPubKey{address1, address2},
+				[]*address.AddressPubKey{address1, address2},
 				2)
 			if err != nil {
 				t.Errorf("failed to make pkscript "+
 					"for %s: %v", msg, err)
 			}
 
-			scriptAddr, err := btcutil.NewAddressScriptHash(
+			scriptAddr, err := address.NewAddressScriptHash(
 				pkScript, &chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
@@ -1173,16 +1158,15 @@ func TestSignTxOutput(t *testing.T) {
 		for i := range tx.TxIn {
 			msg := fmt.Sprintf("%d:%d", hashType, i)
 
-			key1, err := btcec.NewPrivateKey(btcec.S256())
+			key1, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk1 := (*btcec.PublicKey)(&key1.PublicKey).
-				SerializeCompressed()
-			address1, err := btcutil.NewAddressPubKey(pk1,
+			pk1 := key1.PubKey().SerializeCompressed()
+			address1, err := address.NewAddressPubKey(pk1,
 				&chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
@@ -1190,16 +1174,15 @@ func TestSignTxOutput(t *testing.T) {
 				break
 			}
 
-			key2, err := btcec.NewPrivateKey(btcec.S256())
+			key2, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey 2 for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk2 := (*btcec.PublicKey)(&key2.PublicKey).
-				SerializeCompressed()
-			address2, err := btcutil.NewAddressPubKey(pk2,
+			pk2 := key2.PubKey().SerializeCompressed()
+			address2, err := address.NewAddressPubKey(pk2,
 				&chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address 2 for %s: %v",
@@ -1208,14 +1191,14 @@ func TestSignTxOutput(t *testing.T) {
 			}
 
 			pkScript, err := MultiSigScript(
-				[]*btcutil.AddressPubKey{address1, address2},
+				[]*address.AddressPubKey{address1, address2},
 				2)
 			if err != nil {
 				t.Errorf("failed to make pkscript "+
 					"for %s: %v", msg, err)
 			}
 
-			scriptAddr, err := btcutil.NewAddressScriptHash(
+			scriptAddr, err := address.NewAddressScriptHash(
 				pkScript, &chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
@@ -1279,16 +1262,15 @@ func TestSignTxOutput(t *testing.T) {
 		for i := range tx.TxIn {
 			msg := fmt.Sprintf("%d:%d", hashType, i)
 
-			key1, err := btcec.NewPrivateKey(btcec.S256())
+			key1, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk1 := (*btcec.PublicKey)(&key1.PublicKey).
-				SerializeCompressed()
-			address1, err := btcutil.NewAddressPubKey(pk1,
+			pk1 := key1.PubKey().SerializeCompressed()
+			address1, err := address.NewAddressPubKey(pk1,
 				&chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address for %s: %v",
@@ -1296,16 +1278,15 @@ func TestSignTxOutput(t *testing.T) {
 				break
 			}
 
-			key2, err := btcec.NewPrivateKey(btcec.S256())
+			key2, err := btcec.NewPrivateKey()
 			if err != nil {
 				t.Errorf("failed to make privKey 2 for %s: %v",
 					msg, err)
 				break
 			}
 
-			pk2 := (*btcec.PublicKey)(&key2.PublicKey).
-				SerializeCompressed()
-			address2, err := btcutil.NewAddressPubKey(pk2,
+			pk2 := key2.PubKey().SerializeCompressed()
+			address2, err := address.NewAddressPubKey(pk2,
 				&chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make address 2 for %s: %v",
@@ -1314,14 +1295,14 @@ func TestSignTxOutput(t *testing.T) {
 			}
 
 			pkScript, err := MultiSigScript(
-				[]*btcutil.AddressPubKey{address1, address2},
+				[]*address.AddressPubKey{address1, address2},
 				2)
 			if err != nil {
 				t.Errorf("failed to make pkscript "+
 					"for %s: %v", msg, err)
 			}
 
-			scriptAddr, err := btcutil.NewAddressScriptHash(
+			scriptAddr, err := address.NewAddressScriptHash(
 				pkScript, &chaincfg.TestNet3Params)
 			if err != nil {
 				t.Errorf("failed to make p2sh addr for %s: %v",
@@ -1635,7 +1616,7 @@ var sigScriptTests = []tstSigScript{
 func TestSignatureScript(t *testing.T) {
 	t.Parallel()
 
-	privKey, _ := btcec.PrivKeyFromBytes(btcec.S256(), privKeyD)
+	privKey, _ := btcec.PrivKeyFromBytes(privKeyD)
 
 nexttest:
 	for i := range sigScriptTests {
@@ -1694,7 +1675,7 @@ nexttest:
 		scriptFlags := ScriptBip16 | ScriptVerifyDERSignatures
 		for j := range tx.TxIn {
 			vm, err := NewEngine(sigScriptTests[i].
-				inputs[j].txout.PkScript, tx, j, scriptFlags, nil, nil, 0)
+				inputs[j].txout.PkScript, tx, j, scriptFlags, nil, nil, 0, nil)
 			if err != nil {
 				t.Errorf("cannot create script vm for test %v: %v",
 					sigScriptTests[i].name, err)
@@ -1711,6 +1692,502 @@ nexttest:
 				}
 				continue nexttest
 			}
+		}
+	}
+}
+
+// TestRawTxInTaprootSignature tests that the RawTxInTaprootSignature function
+// generates valid signatures for all relevant sighash types.
+func TestRawTxInTaprootSignature(t *testing.T) {
+	t.Parallel()
+
+	privKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	pubKey := ComputeTaprootKeyNoScript(privKey.PubKey())
+
+	pkScript, err := PayToTaprootScript(pubKey)
+	require.NoError(t, err)
+
+	// We'll reuse this simple transaction for the tests below. It ends up
+	// spending from a bip86 P2TR output.
+	testTx := wire.NewMsgTx(2)
+	testTx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{
+			Index: 1,
+		},
+	})
+	txOut := &wire.TxOut{
+		Value: 1e8, PkScript: pkScript,
+	}
+	testTx.AddTxOut(txOut)
+
+	tests := []struct {
+		sigHashType SigHashType
+	}{
+		{
+			sigHashType: SigHashDefault,
+		},
+		{
+			sigHashType: SigHashAll,
+		},
+		{
+			sigHashType: SigHashNone,
+		},
+		{
+			sigHashType: SigHashSingle,
+		},
+		{
+			sigHashType: SigHashSingle | SigHashAnyOneCanPay,
+		},
+		{
+			sigHashType: SigHashNone | SigHashAnyOneCanPay,
+		},
+		{
+			sigHashType: SigHashAll | SigHashAnyOneCanPay,
+		},
+	}
+	for _, test := range tests {
+		name := fmt.Sprintf("sighash=%v", test.sigHashType)
+		t.Run(name, func(t *testing.T) {
+			prevFetcher := NewCannedPrevOutputFetcher(
+				txOut.PkScript, txOut.Value,
+			)
+			sigHashes := NewTxSigHashes(testTx, prevFetcher)
+
+			sig, err := RawTxInTaprootSignature(
+				testTx, sigHashes, 0, txOut.Value, txOut.PkScript,
+				nil, test.sigHashType, privKey,
+			)
+			require.NoError(t, err)
+
+			// If this isn't sighash default, then a sighash should be
+			// applied. Otherwise, it should be a normal sig.
+			expectedLen := schnorr.SignatureSize
+			if test.sigHashType != SigHashDefault {
+				expectedLen += 1
+			}
+			require.Len(t, sig, expectedLen)
+
+			// Finally, ensure that the signature produced is valid.
+			txCopy := testTx.Copy()
+			txCopy.TxIn[0].Witness = wire.TxWitness{sig}
+			vm, err := NewEngine(
+				txOut.PkScript, txCopy, 0, StandardVerifyFlags,
+				nil, sigHashes, txOut.Value, prevFetcher,
+			)
+			require.NoError(t, err)
+
+			require.NoError(t, vm.Execute())
+		})
+	}
+}
+
+// TestRawTxInTapscriptSignature thats that we're able to produce valid schnorr
+// signatures for a simple tapscript spend, for various sighash types.
+func TestRawTxInTapscriptSignature(t *testing.T) {
+	t.Parallel()
+
+	privKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	internalKey := privKey.PubKey()
+
+	// Our script will be a simple OP_CHECKSIG as the sole leaf of a
+	// tapscript tree. We'll also re-use the internal key as the key in the
+	// leaf.
+	builder := NewScriptBuilder()
+	builder.AddData(schnorr.SerializePubKey(internalKey))
+	builder.AddOp(OP_CHECKSIG)
+	pkScript, err := builder.Script()
+	require.NoError(t, err)
+
+	tapLeaf := NewBaseTapLeaf(pkScript)
+	tapScriptTree := AssembleTaprootScriptTree(tapLeaf)
+
+	ctrlBlock := tapScriptTree.LeafMerkleProofs[0].ToControlBlock(
+		internalKey,
+	)
+
+	tapScriptRootHash := tapScriptTree.RootNode.TapHash()
+	outputKey := ComputeTaprootOutputKey(
+		internalKey, tapScriptRootHash[:],
+	)
+	p2trScript, err := PayToTaprootScript(outputKey)
+	require.NoError(t, err)
+
+	// We'll reuse this simple transaction for the tests below. It ends up
+	// spending from a bip86 P2TR output.
+	testTx := wire.NewMsgTx(2)
+	testTx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{
+			Index: 1,
+		},
+	})
+	txOut := &wire.TxOut{
+		Value: 1e8, PkScript: p2trScript,
+	}
+	testTx.AddTxOut(txOut)
+
+	tests := []struct {
+		sigHashType SigHashType
+	}{
+		{
+			sigHashType: SigHashDefault,
+		},
+		{
+			sigHashType: SigHashAll,
+		},
+		{
+			sigHashType: SigHashNone,
+		},
+		{
+			sigHashType: SigHashSingle,
+		},
+		{
+			sigHashType: SigHashSingle | SigHashAnyOneCanPay,
+		},
+		{
+			sigHashType: SigHashNone | SigHashAnyOneCanPay,
+		},
+		{
+			sigHashType: SigHashAll | SigHashAnyOneCanPay,
+		},
+	}
+	for _, test := range tests {
+		name := fmt.Sprintf("sighash=%v", test.sigHashType)
+		t.Run(name, func(t *testing.T) {
+			prevFetcher := NewCannedPrevOutputFetcher(
+				txOut.PkScript, txOut.Value,
+			)
+			sigHashes := NewTxSigHashes(testTx, prevFetcher)
+
+			sig, err := RawTxInTapscriptSignature(
+				testTx, sigHashes, 0, txOut.Value,
+				txOut.PkScript, tapLeaf, test.sigHashType,
+				privKey,
+			)
+			require.NoError(t, err)
+
+			// If this isn't sighash default, then a sighash should
+			// be applied. Otherwise, it should be a normal sig.
+			expectedLen := schnorr.SignatureSize
+			if test.sigHashType != SigHashDefault {
+				expectedLen += 1
+			}
+			require.Len(t, sig, expectedLen)
+
+			// Now that we have the sig, we'll make a valid witness
+			// including the control block.
+			ctrlBlockBytes, err := ctrlBlock.ToBytes()
+			require.NoError(t, err)
+			txCopy := testTx.Copy()
+			txCopy.TxIn[0].Witness = wire.TxWitness{
+				sig, pkScript, ctrlBlockBytes,
+			}
+
+			// Finally, ensure that the signature produced is valid.
+			vm, err := NewEngine(
+				txOut.PkScript, txCopy, 0, StandardVerifyFlags,
+				nil, sigHashes, txOut.Value, prevFetcher,
+			)
+			require.NoError(t, err)
+
+			require.NoError(t, vm.Execute())
+		})
+	}
+}
+
+// TestSignSigHashSingleNoOutput ensures that an input is never signed with
+// SigHashSingle when the transaction has no output at the index of that input.
+// Such a signature commits to no output at all, so it would stay valid however
+// the outputs are changed while the matching output remains absent. All other
+// inputs and hash types must still produce valid signatures.
+func TestSignSigHashSingleNoOutput(t *testing.T) {
+	t.Parallel()
+
+	privKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	pubKey := privKey.PubKey()
+	pubKeyBytes := pubKey.SerializeCompressed()
+
+	p2pkhAddr, err := address.NewAddressPubKeyHash(
+		address.Hash160(pubKeyBytes), &chaincfg.TestNet3Params,
+	)
+	require.NoError(t, err)
+	p2pkhScript, err := PayToAddrScript(p2pkhAddr)
+	require.NoError(t, err)
+
+	pubKeyAddr, err := address.NewAddressPubKey(
+		pubKeyBytes, &chaincfg.TestNet3Params,
+	)
+	require.NoError(t, err)
+	multiSigScript, err := MultiSigScript(
+		[]*address.AddressPubKey{pubKeyAddr}, 1,
+	)
+	require.NoError(t, err)
+
+	p2shP2pkhAddr, err := address.NewAddressScriptHash(
+		p2pkhScript, &chaincfg.TestNet3Params,
+	)
+	require.NoError(t, err)
+	p2shP2pkhScript, err := PayToAddrScript(p2shP2pkhAddr)
+	require.NoError(t, err)
+
+	p2shMultiSigAddr, err := address.NewAddressScriptHash(
+		multiSigScript, &chaincfg.TestNet3Params,
+	)
+	require.NoError(t, err)
+	p2shMultiSigScript, err := PayToAddrScript(p2shMultiSigAddr)
+	require.NoError(t, err)
+
+	p2wkhAddr, err := address.NewAddressWitnessPubKeyHash(
+		address.Hash160(pubKeyBytes), &chaincfg.TestNet3Params,
+	)
+	require.NoError(t, err)
+	p2wkhScript, err := PayToAddrScript(p2wkhAddr)
+	require.NoError(t, err)
+
+	p2trScript, err := PayToTaprootScript(
+		ComputeTaprootKeyNoScript(pubKey),
+	)
+	require.NoError(t, err)
+
+	// The transaction has two inputs but a single output, so input 1 has
+	// no output at the same index.
+	const amt = 1e8
+	tx := wire.NewMsgTx(2)
+	tx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Index: 0}})
+	tx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Index: 1}})
+	tx.AddTxOut(wire.NewTxOut(amt, p2pkhScript))
+
+	getKey := KeyClosure(func(address.Address) (*btcec.PrivateKey, bool,
+		error) {
+
+		return privKey, true, nil
+	})
+	getScript := mkGetScript(map[string][]byte{
+		p2shP2pkhAddr.EncodeAddress():    p2pkhScript,
+		p2shMultiSigAddr.EncodeAddress(): multiSigScript,
+	})
+
+	// requireSingleIndexErr asserts that err reports an attempt to sign a
+	// SigHashSingle input that has no matching output.
+	requireSingleIndexErr := func(t *testing.T, err error) {
+		t.Helper()
+
+		require.Truef(
+			t, IsErrorCode(err, ErrInvalidSigHashSingleIndex),
+			"unexpected error: %v", err,
+		)
+	}
+
+	// scriptTest is a previous output script to spend. For multisig,
+	// unsigned is the script that SignTxOutput returns when it skips a
+	// refused signature.
+	type scriptTest struct {
+		name     string
+		pkScript []byte
+		unsigned []byte
+	}
+
+	// check signs input idx of a copy of tx the way a wallet would for
+	// the type of the script. Without an output to commit to, no signature
+	// may be produced. Otherwise, the signature must validly spend the
+	// input.
+	check := func(t *testing.T, test scriptTest, hashType SigHashType,
+		idx int) {
+
+		pkScript := test.pkScript
+		prevOuts := NewCannedPrevOutputFetcher(pkScript, amt)
+		sigHashes := NewTxSigHashes(tx, prevOuts)
+
+		txCopy := tx.Copy()
+		txIn := txCopy.TxIn[idx]
+		class := GetScriptClass(pkScript)
+
+		var err error
+		switch class {
+		case WitnessV0PubKeyHashTy:
+			txIn.Witness, err = WitnessSignature(
+				txCopy, sigHashes, idx, amt, pkScript,
+				hashType, privKey, true,
+			)
+
+		case WitnessV1TaprootTy:
+			txIn.Witness, err = TaprootWitnessSignature(
+				txCopy, sigHashes, idx, amt, pkScript,
+				hashType, privKey,
+			)
+
+		default:
+			txIn.SignatureScript, err = SignTxOutput(
+				&chaincfg.TestNet3Params, txCopy, idx,
+				pkScript, hashType, getKey, getScript, nil,
+			)
+		}
+
+		noOutput := hashType&sigHashMask == SigHashSingle &&
+			idx >= len(txCopy.TxOut)
+
+		switch {
+		// Every combination except SigHashSingle without a matching
+		// output must produce a valid spend.
+		case !noOutput:
+			require.NoError(t, err)
+
+			vm, err := NewEngine(
+				pkScript, txCopy, idx, StandardVerifyFlags,
+				nil, sigHashes, amt, prevOuts,
+			)
+			require.NoError(t, err)
+			require.NoError(t, vm.Execute())
+
+		// Multisig signing skips keys that fail to sign, so the script
+		// comes back without any signature.
+		case test.unsigned != nil:
+			require.NoError(t, err)
+			require.Equal(t, test.unsigned, txIn.SignatureScript)
+
+		// The taproot sighash itself rejects this combination, with an
+		// error of its own.
+		case class == WitnessV1TaprootTy:
+			require.Error(t, err)
+			require.Nil(t, txIn.Witness)
+
+		default:
+			requireSingleIndexErr(t, err)
+			require.Nil(t, txIn.SignatureScript)
+			require.Nil(t, txIn.Witness)
+		}
+	}
+
+	hashTypes := []SigHashType{
+		SigHashAll,
+		SigHashNone,
+		SigHashSingle,
+		SigHashAll | SigHashAnyOneCanPay,
+		SigHashNone | SigHashAnyOneCanPay,
+		SigHashSingle | SigHashAnyOneCanPay,
+	}
+
+	// The unsigned P2SH-multisig script keeps the redeem script after the
+	// dummy element.
+	unsignedP2shMultiSig, err := NewScriptBuilder().AddOp(OP_0).
+		AddData(multiSigScript).Script()
+	require.NoError(t, err)
+
+	scriptTests := []scriptTest{
+		{name: "p2pkh", pkScript: p2pkhScript},
+		{
+			name:     "bare multisig",
+			pkScript: multiSigScript,
+			unsigned: []byte{OP_0},
+		},
+		{name: "p2sh-p2pkh", pkScript: p2shP2pkhScript},
+		{
+			name:     "p2sh-multisig",
+			pkScript: p2shMultiSigScript,
+			unsigned: unsignedP2shMultiSig,
+		},
+		{name: "p2wkh", pkScript: p2wkhScript},
+		{name: "p2tr", pkScript: p2trScript},
+	}
+	for _, test := range scriptTests {
+		for _, hashType := range hashTypes {
+			for idx := range tx.TxIn {
+				name := fmt.Sprintf("%s sighash=%#x input=%d",
+					test.name, hashType, idx)
+
+				t.Run(name, func(t *testing.T) {
+					check(t, test, hashType, idx)
+				})
+			}
+		}
+	}
+
+	sigHashes := NewTxSigHashes(
+		tx, NewCannedPrevOutputFetcher(p2wkhScript, amt),
+	)
+
+	// checkRawSig signs input idx with hashType, using the legacy or the
+	// segwit v0 ECDSA signer. Unless refused, the result must be a
+	// signature of the input's sighash, followed by hashType.
+	checkRawSig := func(t *testing.T, witness bool, hashType SigHashType,
+		idx int, refused bool) {
+
+		var (
+			sig, hash    []byte
+			err, hashErr error
+		)
+		if witness {
+			sig, err = RawTxInWitnessSignature(
+				tx, sigHashes, idx, amt, p2wkhScript, hashType,
+				privKey,
+			)
+			hash, hashErr = CalcWitnessSigHash(
+				p2wkhScript, sigHashes, hashType, tx, idx, amt,
+			)
+		} else {
+			sig, err = RawTxInSignature(
+				tx, idx, p2pkhScript, hashType, privKey,
+			)
+			hash, hashErr = CalcSignatureHash(
+				p2pkhScript, hashType, tx, idx,
+			)
+		}
+		require.NoError(t, hashErr)
+
+		if refused {
+			requireSingleIndexErr(t, err)
+			require.Nil(t, sig)
+
+			return
+		}
+
+		require.NoError(t, err)
+		require.NotEmpty(t, sig)
+		require.Equal(t, byte(hashType), sig[len(sig)-1])
+
+		parsedSig, err := ecdsa.ParseDERSignature(sig[:len(sig)-1])
+		require.NoError(t, err)
+		require.True(t, parsedSig.Verify(hash, pubKey))
+	}
+
+	// The ECDSA signers mask the hash type with sigHashMask, like the
+	// legacy and segwit v0 sighashes. Without a matching output, they must
+	// refuse every type that the mask turns into SigHashSingle, such as
+	// 0x43, but still sign non-standard types such as 0x07, which the
+	// sighashes treat like SigHashAll and so commit to every output.
+	// Bitcoin Core masks with 3 instead, so without a matching output it
+	// refuses those too.
+	rawTests := []struct {
+		hashType SigHashType
+		idx      int
+		refused  bool
+	}{
+		{hashType: 0x03, idx: 1, refused: true},
+		{hashType: 0x83, idx: 1, refused: true},
+		{hashType: 0x23, idx: 1, refused: true},
+		{hashType: 0x43, idx: 1, refused: true},
+		{hashType: 0xc3, idx: 1, refused: true},
+		{hashType: 0x07, idx: 1},
+		{hashType: 0x0b, idx: 1},
+		{hashType: 0x13, idx: 1},
+		{hashType: 0x43, idx: 0},
+	}
+	for _, test := range rawTests {
+		for _, witness := range []bool{false, true} {
+			name := fmt.Sprintf("raw witness=%v sighash=%#x "+
+				"input=%d", witness, test.hashType, test.idx)
+
+			t.Run(name, func(t *testing.T) {
+				checkRawSig(
+					t, witness, test.hashType, test.idx,
+					test.refused,
+				)
+			})
 		}
 	}
 }

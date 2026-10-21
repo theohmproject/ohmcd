@@ -1,13 +1,13 @@
 mempool
 =======
 
-[![Build Status](http://img.shields.io/travis/btcsuite/btcd.svg)](https://travis-ci.org/btcsuite/btcd)
+[![Build Status](https://github.com/btcsuite/btcd/workflows/Build%20and%20Test/badge.svg)](https://github.com/btcsuite/btcd/actions)
 [![ISC License](http://img.shields.io/badge/license-ISC-blue.svg)](http://copyfree.org)
-[![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](http://godoc.org/github.com/btcsuite/btcd/mempool)
+[![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](https://pkg.go.dev/github.com/btcsuite/btcd/mempool)
 
 Package mempool provides a policy-enforced pool of unmined bitcoin transactions.
 
-A key responsbility of the bitcoin network is mining user-generated transactions
+A key responsibility of the bitcoin network is mining user-generated transactions
 into blocks.  In order to facilitate this, the mining process relies on having a
 readily-available source of transactions to include in a block that is being
 solved.

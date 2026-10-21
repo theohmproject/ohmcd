@@ -11,7 +11,7 @@ import (
 	"github.com/btcsuite/btcd/btcjson"
 )
 
-// TestCmdMethod tests the CmdMethod function to ensure it retunrs the expected
+// TestCmdMethod tests the CmdMethod function to ensure it returns the expected
 // methods and errors.
 func TestCmdMethod(t *testing.T) {
 	t.Parallel()
@@ -151,7 +151,7 @@ func TestMethodUsageText(t *testing.T) {
 		{
 			name:     "getblock",
 			method:   "getblock",
-			expected: `getblock "hash" (verbose=true verbosetx=false)`,
+			expected: `getblock "hash" (verbosity=1)`,
 		},
 	}
 

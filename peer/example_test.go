@@ -10,13 +10,13 @@ import (
 	"net"
 	"time"
 
-	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/chaincfg/v2"
 	"github.com/btcsuite/btcd/peer"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 // mockRemotePeer creates a basic inbound peer listening on the simnet port for
-// use with Example_peerConnection.  It does not return until the listner is
+// use with Example_peerConnection.  It does not return until the listener is
 // active.
 func mockRemotePeer() error {
 	// Configure peer to act as a simnet node that offers no services.
@@ -25,6 +25,7 @@ func mockRemotePeer() error {
 		UserAgentVersion: "1.0.0", // User agent version to advertise.
 		ChainParams:      &chaincfg.SimNetParams,
 		TrickleInterval:  time.Second * 10,
+		AllowSelfConns:   true,
 	}
 
 	// Accept connections on the simnet port.
@@ -81,6 +82,7 @@ func Example_newOutboundPeer() {
 				verack <- struct{}{}
 			},
 		},
+		AllowSelfConns: true,
 	}
 	p, err := peer.NewOutboundPeer(peerCfg, "127.0.0.1:18555")
 	if err != nil {

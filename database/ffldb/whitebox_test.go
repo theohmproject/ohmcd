@@ -17,12 +17,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/btcutil/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
 	"github.com/btcsuite/btcd/database"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/goleveldb/leveldb"
-	ldberrors "github.com/btcsuite/goleveldb/leveldb/errors"
+	"github.com/btcsuite/btcd/wire/v2"
+	"github.com/syndtr/goleveldb/leveldb"
+	ldberrors "github.com/syndtr/goleveldb/leveldb/errors"
 )
 
 var (
@@ -165,8 +165,8 @@ func TestConvertErr(t *testing.T) {
 func TestCornerCases(t *testing.T) {
 	t.Parallel()
 
-	// Create a file at the datapase path to force the open below to fail.
-	dbPath := filepath.Join(os.TempDir(), "ffldb-errors")
+	// Create a file at the database path to force the open below to fail.
+	dbPath := filepath.Join(t.TempDir(), "ffldb-errors")
 	_ = os.RemoveAll(dbPath)
 	fi, err := os.Create(dbPath)
 	if err != nil {
@@ -218,7 +218,7 @@ func TestCornerCases(t *testing.T) {
 	ldb := idb.(*db).cache.ldb
 	ldb.Close()
 
-	// Ensure initilization errors in the underlying database work as
+	// Ensure initialization errors in the underlying database work as
 	// expected.
 	testName = "initDB: reinitialization"
 	wantErrCode = database.ErrDbNotOpen
@@ -603,14 +603,13 @@ func testCorruption(tc *testContext) bool {
 // correctly.
 func TestFailureScenarios(t *testing.T) {
 	// Create a new database to run tests against.
-	dbPath := filepath.Join(os.TempDir(), "ffldb-failurescenarios")
+	dbPath := filepath.Join(t.TempDir(), "ffldb-failurescenarios")
 	_ = os.RemoveAll(dbPath)
 	idb, err := database.Create(dbType, dbPath, blockDataNet)
 	if err != nil {
 		t.Errorf("Failed to create test database (%s) %v", dbType, err)
 		return
 	}
-	defer os.RemoveAll(dbPath)
 	defer idb.Close()
 
 	// Create a test context to pass around.
@@ -643,9 +642,9 @@ func TestFailureScenarios(t *testing.T) {
 		// context.
 		maxSize := int64(-1)
 		if maxFileSize, ok := tc.maxFileSizes[fileNum]; ok {
-			maxSize = int64(maxFileSize)
+			maxSize = maxFileSize
 		}
-		file := &mockFile{maxSize: int64(maxSize)}
+		file := &mockFile{maxSize: maxSize}
 		tc.files[fileNum] = &lockableFile{file: file}
 		return file, nil
 	}

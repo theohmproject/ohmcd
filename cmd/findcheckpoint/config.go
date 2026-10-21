@@ -8,12 +8,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
-	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/btcutil/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
 	"github.com/btcsuite/btcd/database"
 	_ "github.com/btcsuite/btcd/database/ffldb"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
+	"github.com/btcsuite/btcd/wire/v2"
 	flags "github.com/jessevdk/go-flags"
 )
 
@@ -37,22 +38,17 @@ var (
 type config struct {
 	DataDir        string `short:"b" long:"datadir" description:"Location of the btcd data directory"`
 	DbType         string `long:"dbtype" description:"Database backend to use for the Block Chain"`
-	TestNet3       bool   `long:"testnet" description:"Use the test network"`
+	UseGoOutput    bool   `short:"g" long:"gooutput" description:"Display the candidates using Go syntax that is ready to insert into the btcchain checkpoint list"`
+	NumCandidates  int    `short:"n" long:"numcandidates" description:"Max num of checkpoint candidates to show {1-20}"`
 	RegressionTest bool   `long:"regtest" description:"Use the regression test network"`
 	SimNet         bool   `long:"simnet" description:"Use the simulation test network"`
-	NumCandidates  int    `short:"n" long:"numcandidates" description:"Max num of checkpoint candidates to show {1-20}"`
-	UseGoOutput    bool   `short:"g" long:"gooutput" description:"Display the candidates using Go syntax that is ready to insert into the btcchain checkpoint list"`
+	TestNet3       bool   `long:"testnet" description:"Use the test network (version 3)"`
+	TestNet4       bool   `long:"testnet4" description:"Use the test network (version 4)"`
 }
 
 // validDbType returns whether or not dbType is a supported database type.
 func validDbType(dbType string) bool {
-	for _, knownType := range knownDbTypes {
-		if dbType == knownType {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(knownDbTypes, dbType)
 }
 
 // netName returns the name used when referring to a bitcoin network.  At the
@@ -100,6 +96,10 @@ func loadConfig() (*config, []string, error) {
 	if cfg.TestNet3 {
 		numNets++
 		activeNetParams = &chaincfg.TestNet3Params
+	}
+	if cfg.TestNet4 {
+		numNets++
+		activeNetParams = &chaincfg.TestNet4Params
 	}
 	if cfg.RegressionTest {
 		numNets++

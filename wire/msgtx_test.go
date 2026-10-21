@@ -6,13 +6,15 @@ package wire
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"reflect"
 	"testing"
 
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/chainhash/v2"
 	"github.com/davecgh/go-spew/spew"
+	"github.com/stretchr/testify/require"
 )
 
 // TestTx tests the MsgTx API.
@@ -400,6 +402,52 @@ func TestTxWire(t *testing.T) {
 	}
 }
 
+// TestTxDecodeErrorClearsScripts checks that failed public decodes drop all
+// script references and allow a later successful decode into the same receiver.
+func TestTxDecodeErrorClearsScripts(t *testing.T) {
+	for _, enc := range []MessageEncoding{BaseEncoding, WitnessEncoding} {
+		for _, buffered := range []bool{false, true} {
+			name := fmt.Sprintf("encoding=%d/buffered=%t", enc, buffered)
+			t.Run(name, func(t *testing.T) {
+				tx := NewMsgTx(2)
+				var witness TxWitness
+				if enc == WitnessEncoding {
+					witness = TxWitness{{0x01, 0x02}, {0x03}}
+				}
+				tx.AddTxIn(NewTxIn(
+					&OutPoint{}, []byte{0x04, 0x05}, witness,
+				))
+				tx.AddTxOut(NewTxOut(1, []byte{0x06, 0x07}))
+				tx.LockTime = 123
+
+				var serialized bytes.Buffer
+				require.NoError(t, tx.BtcEncode(&serialized, 0, enc))
+				data := serialized.Bytes()
+				reader := func(data []byte) io.Reader {
+					r := bytes.NewReader(data)
+					if buffered {
+						return r
+					}
+					return struct{ io.Reader }{r}
+				}
+
+				// Include early errors on a populated receiver as well
+				// as errors after scripts and witnesses have been staged.
+				for end := 0; end < len(data); end++ {
+					decoded := tx.Copy()
+					err := decoded.BtcDecode(reader(data[:end]), 0, enc)
+					require.Error(t, err, "prefix length %d", end)
+					require.Nil(t, decoded.TxIn, "prefix length %d", end)
+					require.Nil(t, decoded.TxOut, "prefix length %d", end)
+
+					require.NoError(t, decoded.BtcDecode(reader(data), 0, enc))
+					require.Equal(t, tx, decoded)
+				}
+			})
+		}
+	}
+}
+
 // TestTxWireErrors performs negative tests against wire encode and decode
 // of MsgTx to confirm error paths work correctly.
 func TestTxWireErrors(t *testing.T) {
@@ -671,7 +719,7 @@ func TestTxOverflowErrors(t *testing.T) {
 				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Previous output hash
-				0xff, 0xff, 0xff, 0xff, // Prevous output index
+				0xff, 0xff, 0xff, 0xff, // Previous output index
 				0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
 				0xff, // Varint for length of signature script
 			}, pver, BaseEncoding, txVer, &MessageError{},
@@ -687,7 +735,7 @@ func TestTxOverflowErrors(t *testing.T) {
 				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Previous output hash
-				0xff, 0xff, 0xff, 0xff, // Prevous output index
+				0xff, 0xff, 0xff, 0xff, // Previous output index
 				0x00,                   // Varint for length of signature script
 				0xff, 0xff, 0xff, 0xff, // Sequence
 				0x01,                                           // Varint for number of output transactions
@@ -732,7 +780,7 @@ func TestTxSerializeSizeStripped(t *testing.T) {
 		in   *MsgTx // Tx to encode
 		size int    // Expected serialized size
 	}{
-		// No inputs or outpus.
+		// No inputs or outputs.
 		{noTx, 10},
 
 		// Transcaction with an input and an output.
@@ -752,6 +800,34 @@ func TestTxSerializeSizeStripped(t *testing.T) {
 				serializedSize, test.size)
 			continue
 		}
+	}
+}
+
+// TestTxID performs tests to ensure the serialize size for various transactions
+// is accurate.
+func TestTxID(t *testing.T) {
+	// Empty tx message.
+	noTx := NewMsgTx(1)
+	noTx.Version = 1
+
+	tests := []struct {
+		in   *MsgTx // Tx to encode.
+		txid string // Expected transaction ID.
+	}{
+		// No inputs or outputs.
+		{noTx, "d21633ba23f70118185227be58a63527675641ad37967e2aa461559f577aec43"},
+
+		// Transaction with an input and an output.
+		{multiTx, "0100d15a522ff38de05c164ca0a56379a1b77dd1e4805a6534dc9b3d88290e9d"},
+
+		// Transaction with an input which includes witness data, and
+		// one output.
+		{multiWitnessTx, "0f167d1385a84d1518cfee208b653fc9163b605ccf1b75347e2850b3e2eb19f3"},
+	}
+
+	for i, test := range tests {
+		txid := test.in.TxID()
+		require.Equal(t, test.txid, txid, "test #%d", i)
 	}
 }
 
@@ -775,6 +851,96 @@ func TestTxWitnessSize(t *testing.T) {
 				serializedSize, test.size)
 			continue
 		}
+	}
+}
+
+// TestTxOutPointFromString performs tests to ensure that the outpoint string
+// parser works as expected.
+func TestTxOutPointFromString(t *testing.T) {
+	hashFromStr := func(hash string) chainhash.Hash {
+		h, _ := chainhash.NewHashFromStr(hash)
+		return *h
+	}
+
+	tests := []struct {
+		name   string
+		input  string
+		result *OutPoint
+		err    bool
+	}{
+		{
+			name:  "normal outpoint 1",
+			input: "2ebd15a7e758d5f4c7c74181b99e5b8586f88e0682dc13e09d92612a2b2bb0a2:1",
+			result: &OutPoint{
+				Hash:  hashFromStr("2ebd15a7e758d5f4c7c74181b99e5b8586f88e0682dc13e09d92612a2b2bb0a2"),
+				Index: 1,
+			},
+			err: false,
+		},
+		{
+			name:  "normal outpoint 2",
+			input: "94c7762a68ff164352bd31fd95fa875204e811c09acef40ba781787eb28e3b55:42",
+			result: &OutPoint{
+				Hash:  hashFromStr("94c7762a68ff164352bd31fd95fa875204e811c09acef40ba781787eb28e3b55"),
+				Index: 42,
+			},
+			err: false,
+		},
+		{
+			name:  "big index outpoint",
+			input: "94c7762a68ff164352bd31fd95fa875204e811c09acef40ba781787eb28e3b55:2147484242",
+			result: &OutPoint{
+				Hash:  hashFromStr("94c7762a68ff164352bd31fd95fa875204e811c09acef40ba781787eb28e3b55"),
+				Index: 2147484242,
+			},
+			err: false,
+		},
+		{
+			name:  "normal outpoint 2 with 31-byte txid",
+			input: "c7762a68ff164352bd31fd95fa875204e811c09acef40ba781787eb28e3b55:42",
+			result: &OutPoint{
+				Hash:  hashFromStr("c7762a68ff164352bd31fd95fa875204e811c09acef40ba781787eb28e3b55"),
+				Index: 42,
+			},
+			err: true,
+		},
+		{
+			name:   "bad string",
+			input:  "not_outpoint_not_outpoint_not_outpoint",
+			result: nil,
+			err:    true,
+		},
+		{
+			name:   "empty string",
+			input:  "",
+			result: nil,
+			err:    true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			outpoint, err := NewOutPointFromString(test.input)
+
+			isErr := (err != nil)
+			require.Equal(t, isErr, test.err)
+
+			if !isErr {
+				require.Equal(t, test.result, outpoint)
+			}
+		})
+
+	}
+}
+
+// TestTxSuperfluousWitnessRecord ensures that btcd fails to parse a tx with
+// the witness marker flag set but without any actual witnesses.
+func TestTxSuperfluousWitnessRecord(t *testing.T) {
+	m := &MsgTx{}
+	rbuf := bytes.NewReader(multiWitnessFlagNoWitness)
+	err := m.BtcDecode(rbuf, ProtocolVersion, WitnessEncoding)
+	if !errors.Is(err, errSuperfluousWitnessRecord) {
+		t.Fatalf("should have failed with %v", errSuperfluousWitnessRecord)
 	}
 }
 
@@ -839,7 +1005,7 @@ var multiTxEncoded = []byte{
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Previous output hash
-	0xff, 0xff, 0xff, 0xff, // Prevous output index
+	0xff, 0xff, 0xff, 0xff, // Previous output index
 	0x07,                                     // Varint for length of signature script
 	0x04, 0x31, 0xdc, 0x00, 0x1b, 0x01, 0x62, // Signature script
 	0xff, 0xff, 0xff, 0xff, // Sequence
@@ -930,14 +1096,41 @@ var multiWitnessTx = &MsgTx{
 	},
 }
 
+// multiWitnessFlagNoWitness is the wire encoded bytes for multiWitnessTx with
+// the witness flag set but with witnesses omitted.
+var multiWitnessFlagNoWitness = []byte{
+	0x1, 0x0, 0x0, 0x0, // Version
+	TxFlagMarker, // Marker byte indicating 0 inputs, or a segwit encoded tx
+	WitnessFlag,  // Flag byte
+	0x1,          // Varint for number of inputs
+	0xa5, 0x33, 0x52, 0xd5, 0x13, 0x57, 0x66, 0xf0,
+	0x30, 0x76, 0x59, 0x74, 0x18, 0x26, 0x3d, 0xa2,
+	0xd9, 0xc9, 0x58, 0x31, 0x59, 0x68, 0xfe, 0xa8,
+	0x23, 0x52, 0x94, 0x67, 0x48, 0x1f, 0xf9, 0xcd, // Previous output hash
+	0x13, 0x0, 0x0, 0x0, // Little endian previous output index
+	0x0,                    // No sig script (this is a witness input)
+	0xff, 0xff, 0xff, 0xff, // Sequence
+	0x1,                                    // Varint for number of outputs
+	0xb, 0x7, 0x6, 0x0, 0x0, 0x0, 0x0, 0x0, // Output amount
+	0x16, // Varint for length of pk script
+	0x0,  // Version 0 witness program
+	0x14, // OP_DATA_20
+	0x9d, 0xda, 0xc6, 0xf3, 0x9d, 0x51, 0xe0, 0x39,
+	0x8e, 0x53, 0x2a, 0x22, 0xc4, 0x1b, 0xa1, 0x89,
+	0x40, 0x6a, 0x85, 0x23, // 20-byte pub key hash
+	0x00,               // No item on the witness stack for the first input
+	0x00,               // No item on the witness stack for the second input
+	0x0, 0x0, 0x0, 0x0, // Lock time
+}
+
 // multiWitnessTxEncoded is the wire encoded bytes for multiWitnessTx including inputs
 // with witness data using protocol version 70012 and is used in the various
 // tests.
 var multiWitnessTxEncoded = []byte{
 	0x1, 0x0, 0x0, 0x0, // Version
-	0x0, // Marker byte indicating 0 inputs, or a segwit encoded tx
-	0x1, // Flag byte
-	0x1, // Varint for number of inputs
+	TxFlagMarker, // Marker byte indicating 0 inputs, or a segwit encoded tx
+	WitnessFlag,  // Flag byte
+	0x1,          // Varint for number of inputs
 	0xa5, 0x33, 0x52, 0xd5, 0x13, 0x57, 0x66, 0xf0,
 	0x30, 0x76, 0x59, 0x74, 0x18, 0x26, 0x3d, 0xa2,
 	0xd9, 0xc9, 0x58, 0x31, 0x59, 0x68, 0xfe, 0xa8,
@@ -978,9 +1171,9 @@ var multiWitnessTxEncoded = []byte{
 // being set to 0x01, the flag is 0x00, which should trigger a decoding error.
 var multiWitnessTxEncodedNonZeroFlag = []byte{
 	0x1, 0x0, 0x0, 0x0, // Version
-	0x0, // Marker byte indicating 0 inputs, or a segwit encoded tx
-	0x0, // Incorrect flag byte (should be 0x01)
-	0x1, // Varint for number of inputs
+	TxFlagMarker, // Marker byte indicating 0 inputs, or a segwit encoded tx
+	0x0,          // Incorrect flag byte (should be 0x01)
+	0x1,          // Varint for number of inputs
 	0xa5, 0x33, 0x52, 0xd5, 0x13, 0x57, 0x66, 0xf0,
 	0x30, 0x76, 0x59, 0x74, 0x18, 0x26, 0x3d, 0xa2,
 	0xd9, 0xc9, 0x58, 0x31, 0x59, 0x68, 0xfe, 0xa8,
@@ -1019,3 +1212,68 @@ var multiWitnessTxEncodedNonZeroFlag = []byte{
 // multiTxPkScriptLocs is the location information for the public key scripts
 // located in multiWitnessTx.
 var multiWitnessTxPkScriptLocs = []int{58}
+
+// TestTxWitnessOverflowPanic ensures that decoding a witness tx where
+// cumulative witness item lengths exceed the script arena capacity
+// returns a decode error instead of panicking on an out-of-bounds
+// slice.
+func TestTxWitnessOverflowPanic(t *testing.T) {
+	// Build a minimal witness tx with one input, zero outputs,
+	// and two witness items whose combined claimed lengths
+	// exceed the scriptArenaMaxAlloc (4 MiB) decode limit.
+	//
+	// Item 1: 3 000 000 bytes  (fits in arena, < maxWitnessItemSize)
+	// Item 2: 2 000 000 bytes  (passes maxWitnessItemSize but
+	//         overflows remaining arena capacity of ~1.19 MiB)
+	const (
+		firstLen  = 3_000_000
+		secondLen = 2_000_000
+	)
+
+	var buf bytes.Buffer
+
+	// tx version = 2
+	buf.Write([]byte{0x02, 0x00, 0x00, 0x00})
+
+	// Segwit marker + flag
+	buf.WriteByte(TxFlagMarker)
+	buf.WriteByte(byte(WitnessFlag))
+
+	// 1 input
+	WriteVarInt(&buf, 0, 1)
+
+	// Previous outpoint: 32-byte zero hash + index 0
+	buf.Write(make([]byte, 32))
+	buf.Write([]byte{0x00, 0x00, 0x00, 0x00})
+
+	// Empty signature script
+	WriteVarInt(&buf, 0, 0)
+
+	// Sequence
+	buf.Write([]byte{0x00, 0x00, 0x00, 0x00})
+
+	// 0 outputs
+	WriteVarInt(&buf, 0, 0)
+
+	// Witness: 2 stack items for the single input
+	WriteVarInt(&buf, 0, 2)
+
+	// First witness item: firstLen bytes of zeros.
+	WriteVarInt(&buf, 0, firstLen)
+	buf.Write(make([]byte, firstLen))
+
+	// Second witness item: only write the varint claiming
+	// secondLen bytes. The actual data is irrelevant because
+	// the bounds check must reject before reading it.
+	WriteVarInt(&buf, 0, secondLen)
+
+	// No locktime needed; decoding should fail before that.
+
+	var msg MsgTx
+	r := bytes.NewReader(buf.Bytes())
+	err := msg.BtcDecode(r, ProtocolVersion, WitnessEncoding)
+	require.Error(t, err)
+
+	var msgErr *MessageError
+	require.ErrorAs(t, err, &msgErr)
+}

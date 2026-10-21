@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 // addrIndexBucket provides a mock address index database bucket by implementing
@@ -68,7 +68,7 @@ func (b *addrIndexBucket) printLevels(addrKey [addrKeySize]byte) string {
 		if !bytes.Equal(k[:levelOffset], addrKey[:]) {
 			continue
 		}
-		level := uint8(k[levelOffset])
+		level := k[levelOffset]
 		if level > highestLevel {
 			highestLevel = level
 		}
@@ -105,7 +105,7 @@ func (b *addrIndexBucket) sanityCheck(addrKey [addrKeySize]byte, expectedTotal i
 		if !bytes.Equal(k[:levelOffset], addrKey[:]) {
 			continue
 		}
-		level := uint8(k[levelOffset])
+		level := k[levelOffset]
 		if level > highestLevel {
 			highestLevel = level
 		}

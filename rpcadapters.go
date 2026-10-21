@@ -8,12 +8,12 @@ import (
 	"sync/atomic"
 
 	"github.com/btcsuite/btcd/blockchain"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/btcutil/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
 	"github.com/btcsuite/btcd/mempool"
 	"github.com/btcsuite/btcd/netsync"
 	"github.com/btcsuite/btcd/peer"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 // rpcPeer provides a peer for use with the RPC server and implements the
@@ -223,6 +223,15 @@ func (cm *rpcConnManager) RelayTransactions(txns []*mempool.TxDesc) {
 	cm.server.relayTransactions(txns)
 }
 
+// NodeAddresses returns an array consisting node addresses which can
+// potentially be used to find new nodes in the network.
+//
+// This function is safe for concurrent access and is part of the
+// rpcserverConnManager interface implementation.
+func (cm *rpcConnManager) NodeAddresses() []*wire.NetAddressV2 {
+	return cm.server.addrManager.AddressCache()
+}
+
 // rpcSyncMgr provides a block manager for use with the RPC server and
 // implements the rpcserverSyncManager interface.
 type rpcSyncMgr struct {
@@ -268,7 +277,7 @@ func (b *rpcSyncMgr) SyncPeerID() int32 {
 	return b.syncMgr.SyncPeerID()
 }
 
-// LocateBlocks returns the hashes of the blocks after the first known block in
+// LocateHeaders returns the hashes of the blocks after the first known block in
 // the provided locators until the provided stop hash or the current tip is
 // reached, up to a max of wire.MaxBlockHeadersPerMsg hashes.
 //

@@ -4,7 +4,11 @@
 
 package wire
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 // TestServiceFlagStringer tests the stringized output for service flag types.
 func TestServiceFlagStringer(t *testing.T) {
@@ -21,7 +25,8 @@ func TestServiceFlagStringer(t *testing.T) {
 		{SFNodeBit5, "SFNodeBit5"},
 		{SFNodeCF, "SFNodeCF"},
 		{SFNode2X, "SFNode2X"},
-		{0xffffffff, "SFNodeNetwork|SFNodeGetUTXO|SFNodeBloom|SFNodeWitness|SFNodeXthin|SFNodeBit5|SFNodeCF|SFNode2X|0xffffff00"},
+		{SFNodeNetworkLimited, "SFNodeNetworkLimited"},
+		{0xffffffff, "SFNodeNetwork|SFNodeGetUTXO|SFNodeBloom|SFNodeWitness|SFNodeXthin|SFNodeBit5|SFNodeCF|SFNode2X|SFNodeNetworkLimited|SFNodeP2PV2|0xfffff300"},
 	}
 
 	t.Logf("Running %d tests", len(tests))
@@ -44,6 +49,8 @@ func TestBitcoinNetStringer(t *testing.T) {
 		{MainNet, "MainNet"},
 		{TestNet, "TestNet"},
 		{TestNet3, "TestNet3"},
+		{TestNet4, "TestNet4"},
+		{SigNet, "SigNet"},
 		{SimNet, "SimNet"},
 		{0xffffffff, "Unknown BitcoinNet (4294967295)"},
 	}
@@ -56,5 +63,21 @@ func TestBitcoinNetStringer(t *testing.T) {
 				test.want)
 			continue
 		}
+	}
+}
+
+func TestHasFlag(t *testing.T) {
+	tests := []struct {
+		in    ServiceFlag
+		check ServiceFlag
+		want  bool
+	}{
+		{0, SFNodeNetwork, false},
+		{SFNodeNetwork | SFNodeNetworkLimited | SFNodeWitness, SFNodeBloom, false},
+		{SFNodeNetwork | SFNodeNetworkLimited | SFNodeWitness, SFNodeNetworkLimited, true},
+	}
+
+	for _, test := range tests {
+		require.Equal(t, test.want, test.in.HasFlag(test.check))
 	}
 }

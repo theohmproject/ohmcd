@@ -231,7 +231,7 @@ func TestMustRegisterCmdPanic(t *testing.T) {
 	t.Parallel()
 
 	// Setup a defer to catch the expected panic to ensure it actually
-	// paniced.
+	// panicked.
 	defer func() {
 		if err := recover(); err == nil {
 			t.Error("MustRegisterCmd did not panic as expected")
@@ -256,7 +256,7 @@ func TestRegisteredCmdMethods(t *testing.T) {
 	// Ensure the returned methods are sorted.
 	sortedMethods := make([]string, len(methods))
 	copy(sortedMethods, methods)
-	sort.Sort(sort.StringSlice(sortedMethods))
+	sort.Strings(sortedMethods)
 	if !reflect.DeepEqual(sortedMethods, methods) {
 		t.Fatal("RegisteredCmdMethods: methods are not sorted")
 	}

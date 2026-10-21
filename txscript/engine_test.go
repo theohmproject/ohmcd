@@ -1,26 +1,28 @@
 // Copyright (c) 2013-2017 The btcsuite developers
+// Copyright (c) 2015-2019 The Decred developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
 package txscript
 
 import (
+	"crypto/sha256"
 	"testing"
 
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
-// TestBadPC sets the pc to a deliberately bad result then confirms that Step()
+// TestBadPC sets the pc to a deliberately bad result then confirms that Step
 // and Disasm fail correctly.
 func TestBadPC(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		script, off int
+		scriptIdx int
 	}{
-		{script: 2, off: 0},
-		{script: 0, off: 2},
+		{scriptIdx: 2},
+		{scriptIdx: 3},
 	}
 
 	// tx with almost empty scripts.
@@ -54,25 +56,25 @@ func TestBadPC(t *testing.T) {
 	pkScript := mustParseShortForm("NOP")
 
 	for _, test := range tests {
-		vm, err := NewEngine(pkScript, tx, 0, 0, nil, nil, -1)
+		vm, err := NewEngine(pkScript, tx, 0, 0, nil, nil, -1, nil)
 		if err != nil {
 			t.Errorf("Failed to create script: %v", err)
 		}
 
-		// set to after all scripts
-		vm.scriptIdx = test.script
-		vm.scriptOff = test.off
+		// Set to after all scripts.
+		vm.scriptIdx = test.scriptIdx
 
+		// Ensure attempting to step fails.
 		_, err = vm.Step()
 		if err == nil {
 			t.Errorf("Step with invalid pc (%v) succeeds!", test)
 			continue
 		}
 
+		// Ensure attempting to disassemble the current program counter fails.
 		_, err = vm.DisasmPC()
 		if err == nil {
-			t.Errorf("DisasmPC with invalid pc (%v) succeeds!",
-				test)
+			t.Errorf("DisasmPC with invalid pc (%v) succeeds!", test)
 		}
 	}
 }
@@ -111,7 +113,7 @@ func TestCheckErrorCondition(t *testing.T) {
 	pkScript := mustParseShortForm("NOP NOP NOP NOP NOP NOP NOP NOP NOP" +
 		" NOP TRUE")
 
-	vm, err := NewEngine(pkScript, tx, 0, 0, nil, nil, 0)
+	vm, err := NewEngine(pkScript, tx, 0, 0, nil, nil, 0, nil)
 	if err != nil {
 		t.Errorf("failed to create script: %v", err)
 	}
@@ -122,12 +124,12 @@ func TestCheckErrorCondition(t *testing.T) {
 			t.Fatalf("failed to step %dth time: %v", i, err)
 		}
 		if done {
-			t.Fatalf("finshed early on %dth time", i)
+			t.Fatalf("finished early on %dth time", i)
 		}
 
 		err = vm.CheckErrorCondition(false)
 		if !IsErrorCode(err, ErrScriptUnfinished) {
-			t.Fatalf("got unexepected error %v on %dth iteration",
+			t.Fatalf("got unexpected error %v on %dth iteration",
 				err, i)
 		}
 	}
@@ -187,7 +189,7 @@ func TestInvalidFlagCombinations(t *testing.T) {
 	pkScript := []byte{OP_NOP}
 
 	for i, test := range tests {
-		_, err := NewEngine(pkScript, tx, 0, test, nil, nil, -1)
+		_, err := NewEngine(pkScript, tx, 0, test, nil, nil, -1, nil)
 		if !IsErrorCode(err, ErrInvalidFlags) {
 			t.Fatalf("TestInvalidFlagCombinations #%d unexpected "+
 				"error: %v", i, err)
@@ -423,5 +425,140 @@ func TestCheckSignatureEncoding(t *testing.T) {
 			t.Errorf("checkSignatureEncooding test '%s' succeeded "+
 				"when it should have failed", test.name)
 		}
+	}
+}
+
+// TestCodeSepUnexecutedBranch ensures that OP_CODESEPARATOR is rejected in
+// non-segwit scripts even when inside an unexecuted OP_IF branch, when the
+// ScriptVerifyConstScriptCode flag is set. This matches Bitcoin Core's
+// behavior where the SCRIPT_VERIFY_CONST_SCRIPTCODE check fires
+// unconditionally before the branch execution gate.
+func TestCodeSepUnexecutedBranch(t *testing.T) {
+	t.Parallel()
+
+	// A minimal transaction for script execution.
+	tx := &wire.MsgTx{
+		Version: 1,
+		TxIn: []*wire.TxIn{{
+			PreviousOutPoint: wire.OutPoint{
+				Hash: chainhash.Hash([32]byte{
+					0xc9, 0x97, 0xa5, 0xe5,
+					0x6e, 0x10, 0x41, 0x02,
+					0xfa, 0x20, 0x9c, 0x6a,
+					0x85, 0x2d, 0xd9, 0x06,
+					0x60, 0xa2, 0x0b, 0x2d,
+					0x9c, 0x35, 0x24, 0x23,
+					0xed, 0xce, 0x25, 0x85,
+					0x7f, 0xcd, 0x37, 0x04,
+				}),
+				Index: 0,
+			},
+			SignatureScript: mustParseShortForm("TRUE"),
+			Sequence:        4294967295,
+		}},
+		TxOut: []*wire.TxOut{{
+			Value:    1000000000,
+			PkScript: nil,
+		}},
+		LockTime: 0,
+	}
+
+	tests := []struct {
+		name    string
+		script  string
+		flags   ScriptFlags
+		segwit  bool
+		wantErr bool
+		errCode ErrorCode
+	}{
+		{
+			// OP_CODESEPARATOR inside an unexecuted branch with
+			// the const scriptcode flag set should be rejected.
+			name:    "codesep in unexecuted IF with const scriptcode",
+			script:  "0 IF CODESEPARATOR ENDIF TRUE",
+			flags:   ScriptVerifyConstScriptCode,
+			wantErr: true,
+			errCode: ErrCodeSeparator,
+		},
+		{
+			// Without the flag, OP_CODESEPARATOR in an unexecuted
+			// branch should be fine (consensus behavior).
+			name:    "codesep in unexecuted IF without const scriptcode",
+			script:  "0 IF CODESEPARATOR ENDIF TRUE",
+			flags:   0,
+			wantErr: false,
+		},
+		{
+			// OP_CODESEPARATOR in an executed branch with the
+			// const scriptcode flag should also be rejected.
+			name:    "codesep in executed branch with const scriptcode",
+			script:  "CODESEPARATOR TRUE",
+			flags:   ScriptVerifyConstScriptCode,
+			wantErr: true,
+			errCode: ErrCodeSeparator,
+		},
+		{
+			// Nested unexecuted branches should still be caught.
+			name:    "codesep in nested unexecuted IF with const scriptcode",
+			script:  "0 IF 1 IF CODESEPARATOR ENDIF ENDIF TRUE",
+			flags:   ScriptVerifyConstScriptCode,
+			wantErr: true,
+			errCode: ErrCodeSeparator,
+		},
+		{
+			// OP_CODESEPARATOR in a segwit P2WSH witness script
+			// should succeed even with const scriptcode, since
+			// the flag only applies to non-segwit scripts.
+			name:    "codesep in segwit P2WSH with const scriptcode",
+			script:  "CODESEPARATOR TRUE",
+			flags:   ScriptVerifyConstScriptCode | ScriptVerifyWitness | ScriptBip16,
+			segwit:  true,
+			wantErr: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			scriptBytes := mustParseShortForm(test.script)
+
+			pkScript := scriptBytes
+			testTx := tx
+			if test.segwit {
+				hash := sha256.Sum256(scriptBytes)
+				pkScript, _ = NewScriptBuilder().
+					AddOp(OP_0).AddData(hash[:]).Script()
+				testTx = tx.Copy()
+				testTx.TxIn[0].SignatureScript = nil
+				testTx.TxIn[0].Witness = wire.TxWitness{
+					scriptBytes,
+				}
+			}
+
+			vm, err := NewEngine(
+				pkScript, testTx, 0, test.flags, nil, nil,
+				-1, nil,
+			)
+			if err != nil {
+				t.Fatalf("failed to create engine: %v", err)
+			}
+
+			err = vm.Execute()
+
+			switch {
+			case test.wantErr && err == nil:
+				t.Fatal("expected error but execution " +
+					"succeeded")
+
+			case !test.wantErr && err != nil:
+				t.Fatalf("unexpected error: %v", err)
+
+			case test.wantErr && err != nil:
+				if !IsErrorCode(err, test.errCode) {
+					t.Fatalf("expected error code "+
+						"%v, got: %v",
+						test.errCode, err)
+				}
+			}
+		})
 	}
 }

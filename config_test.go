@@ -1,13 +1,66 @@
 package main
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"testing"
 )
+
+func TestValidateMaxPeers(t *testing.T) {
+	tests := []struct {
+		name     string
+		maxPeers int
+		wantErr  bool
+	}{
+		{name: "negative", maxPeers: -1, wantErr: true},
+		{name: "zero", wantErr: true},
+		{name: "positive", maxPeers: 1},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateMaxPeers(test.maxPeers)
+			if test.wantErr && err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+		})
+	}
+}
+
+// TestProxyTorIsolation checks when --torisolation applies to --proxy: always,
+// unless --onion is set too, in which case it applies to the onion proxy.
+func TestProxyTorIsolation(t *testing.T) {
+	tests := []struct {
+		name         string
+		torIsolation bool
+		onionProxy   string
+		want         bool
+	}{
+		{name: "isolation", torIsolation: true, want: true},
+		{name: "no isolation"},
+		{
+			name:         "bridge mode",
+			torIsolation: true,
+			onionProxy:   "127.0.0.1:9050",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := proxyTorIsolation(
+				test.torIsolation, test.onionProxy,
+			)
+			if got != test.want {
+				t.Fatalf("got %v, want %v", got, test.want)
+			}
+		})
+	}
+}
 
 var (
 	rpcuserRegexp = regexp.MustCompile("(?m)^rpcuser=.+$")
@@ -23,14 +76,11 @@ func TestCreateDefaultConfigFile(t *testing.T) {
 	sampleConfigFile := filepath.Join(filepath.Dir(path), "sample-btcd.conf")
 
 	// Setup a temporary directory
-	tmpDir, err := ioutil.TempDir("", "btcd")
-	if err != nil {
-		t.Fatalf("Failed creating a temporary directory: %v", err)
-	}
+	tmpDir := t.TempDir()
 	testpath := filepath.Join(tmpDir, "test.conf")
 
 	// copy config file to location of btcd binary
-	data, err := ioutil.ReadFile(sampleConfigFile)
+	data, err := os.ReadFile(sampleConfigFile)
 	if err != nil {
 		t.Fatalf("Failed reading sample config file: %v", err)
 	}
@@ -39,17 +89,10 @@ func TestCreateDefaultConfigFile(t *testing.T) {
 		t.Fatalf("Failed obtaining app path: %v", err)
 	}
 	tmpConfigFile := filepath.Join(appPath, "sample-btcd.conf")
-	err = ioutil.WriteFile(tmpConfigFile, data, 0644)
+	err = os.WriteFile(tmpConfigFile, data, 0644)
 	if err != nil {
 		t.Fatalf("Failed copying sample config file: %v", err)
 	}
-
-	// Clean-up
-	defer func() {
-		os.Remove(testpath)
-		os.Remove(tmpConfigFile)
-		os.Remove(tmpDir)
-	}()
 
 	err = createDefaultConfigFile(testpath)
 
@@ -57,7 +100,7 @@ func TestCreateDefaultConfigFile(t *testing.T) {
 		t.Fatalf("Failed to create a default config file: %v", err)
 	}
 
-	content, err := ioutil.ReadFile(testpath)
+	content, err := os.ReadFile(testpath)
 	if err != nil {
 		t.Fatalf("Failed to read generated default config file: %v", err)
 	}

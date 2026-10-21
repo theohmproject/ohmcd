@@ -6,7 +6,7 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -14,7 +14,8 @@ import (
 	"strings"
 
 	"github.com/btcsuite/btcd/btcjson"
-	"github.com/btcsuite/btcutil"
+	"github.com/btcsuite/btcd/btcutil/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
 	flags "github.com/jessevdk/go-flags"
 )
 
@@ -92,41 +93,62 @@ func listCommands() {
 //
 // See loadConfig for details on the configuration load process.
 type config struct {
-	ShowVersion   bool   `short:"V" long:"version" description:"Display version information and exit"`
-	ListCommands  bool   `short:"l" long:"listcommands" description:"List all of the supported commands and exit"`
-	ConfigFile    string `short:"C" long:"configfile" description:"Path to configuration file"`
-	RPCUser       string `short:"u" long:"rpcuser" description:"RPC username"`
-	RPCPassword   string `short:"P" long:"rpcpass" default-mask:"-" description:"RPC password"`
-	RPCServer     string `short:"s" long:"rpcserver" description:"RPC server to connect to"`
-	RPCCert       string `short:"c" long:"rpccert" description:"RPC server certificate chain for validation"`
-	NoTLS         bool   `long:"notls" description:"Disable TLS"`
-	Proxy         string `long:"proxy" description:"Connect via SOCKS5 proxy (eg. 127.0.0.1:9050)"`
-	ProxyUser     string `long:"proxyuser" description:"Username for proxy server"`
-	ProxyPass     string `long:"proxypass" default-mask:"-" description:"Password for proxy server"`
-	TestNet3      bool   `long:"testnet" description:"Connect to testnet"`
-	SimNet        bool   `long:"simnet" description:"Connect to the simulation test network"`
-	TLSSkipVerify bool   `long:"skipverify" description:"Do not verify tls certificates (not recommended!)"`
-	Wallet        bool   `long:"wallet" description:"Connect to wallet"`
+	ConfigFile     string `short:"C" long:"configfile" description:"Path to configuration file"`
+	ListCommands   bool   `short:"l" long:"listcommands" description:"List all of the supported commands and exit"`
+	NoTLS          bool   `long:"notls" description:"Disable TLS"`
+	Proxy          string `long:"proxy" description:"Connect via SOCKS5 proxy (eg. 127.0.0.1:9050)"`
+	ProxyPass      string `long:"proxypass" default-mask:"-" description:"Password for proxy server"`
+	ProxyUser      string `long:"proxyuser" description:"Username for proxy server"`
+	RegressionTest bool   `long:"regtest" description:"Connect to the regression test network"`
+	RPCCert        string `short:"c" long:"rpccert" description:"RPC server certificate chain for validation"`
+	RPCPassword    string `short:"P" long:"rpcpass" default-mask:"-" description:"RPC password"`
+	RPCServer      string `short:"s" long:"rpcserver" description:"RPC server to connect to"`
+	RPCUser        string `short:"u" long:"rpcuser" description:"RPC username"`
+	SimNet         bool   `long:"simnet" description:"Connect to the simulation test network"`
+	TLSSkipVerify  bool   `long:"skipverify" description:"Do not verify tls certificates (not recommended!)"`
+	TestNet3       bool   `long:"testnet" description:"Connect to testnet (version 3)"`
+	TestNet4       bool   `long:"testnet4" description:"Connect to testnet (version 4)"`
+	SigNet         bool   `long:"signet" description:"Connect to signet"`
+	ShowVersion    bool   `short:"V" long:"version" description:"Display version information and exit"`
+	Wallet         bool   `long:"wallet" description:"Connect to wallet"`
 }
 
 // normalizeAddress returns addr with the passed default port appended if
 // there is not already a port specified.
-func normalizeAddress(addr string, useTestNet3, useSimNet, useWallet bool) string {
+func normalizeAddress(addr string, chain *chaincfg.Params, useWallet bool) (string, error) {
 	_, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		var defaultPort string
-		switch {
-		case useTestNet3:
+		switch chain {
+		case &chaincfg.TestNet3Params:
 			if useWallet {
 				defaultPort = "18332"
 			} else {
 				defaultPort = "18334"
 			}
-		case useSimNet:
+		case &chaincfg.TestNet4Params:
+			if useWallet {
+				defaultPort = "48332"
+			} else {
+				defaultPort = "48334"
+			}
+		case &chaincfg.SimNetParams:
 			if useWallet {
 				defaultPort = "18554"
 			} else {
 				defaultPort = "18556"
+			}
+		case &chaincfg.RegressionNetParams:
+			if useWallet {
+				defaultPort = "18332"
+			} else {
+				defaultPort = "18334"
+			}
+		case &chaincfg.SigNetParams:
+			if useWallet {
+				defaultPort = "38332"
+			} else {
+				defaultPort = "38334"
 			}
 		default:
 			if useWallet {
@@ -136,12 +158,12 @@ func normalizeAddress(addr string, useTestNet3, useSimNet, useWallet bool) strin
 			}
 		}
 
-		return net.JoinHostPort(addr, defaultPort)
+		return net.JoinHostPort(addr, defaultPort), nil
 	}
-	return addr
+	return addr, nil
 }
 
-// cleanAndExpandPath expands environement variables and leading ~ in the
+// cleanAndExpandPath expands environment variables and leading ~ in the
 // passed path, cleans the result, and returns it.
 func cleanAndExpandPath(path string) string {
 	// Expand initial ~ to OS specific home directory.
@@ -159,10 +181,10 @@ func cleanAndExpandPath(path string) string {
 // line options.
 //
 // The configuration proceeds as follows:
-// 	1) Start with a default config with sane settings
-// 	2) Pre-parse the command line to check for an alternative config file
-// 	3) Load configuration file overwriting defaults with any specified options
-// 	4) Parse CLI options and overwrite/add any specified options
+//  1. Start with a default config with sane settings
+//  2. Pre-parse the command line to check for an alternative config file
+//  3. Load configuration file overwriting defaults with any specified options
+//  4. Parse CLI options and overwrite/add any specified options
 //
 // The above results in functioning properly without any config settings
 // while still allowing the user to override settings with config files and
@@ -246,17 +268,35 @@ func loadConfig() (*config, []string, error) {
 		return nil, nil, err
 	}
 
+	// default network is mainnet
+	network := &chaincfg.MainNetParams
+
 	// Multiple networks can't be selected simultaneously.
 	numNets := 0
 	if cfg.TestNet3 {
 		numNets++
+		network = &chaincfg.TestNet3Params
+	}
+	if cfg.TestNet4 {
+		numNets++
+		network = &chaincfg.TestNet4Params
 	}
 	if cfg.SimNet {
 		numNets++
+		network = &chaincfg.SimNetParams
 	}
+	if cfg.RegressionTest {
+		numNets++
+		network = &chaincfg.RegressionNetParams
+	}
+	if cfg.SigNet {
+		numNets++
+		network = &chaincfg.SigNetParams
+	}
+
 	if numNets > 1 {
-		str := "%s: The testnet and simnet params can't be used " +
-			"together -- choose one of the two"
+		str := "%s: Multiple network params can't be used " +
+			"together -- choose one"
 		err := fmt.Errorf(str, "loadConfig")
 		fmt.Fprintln(os.Stderr, err)
 		return nil, nil, err
@@ -273,8 +313,10 @@ func loadConfig() (*config, []string, error) {
 
 	// Add default port to RPC server based on --testnet and --wallet flags
 	// if needed.
-	cfg.RPCServer = normalizeAddress(cfg.RPCServer, cfg.TestNet3,
-		cfg.SimNet, cfg.Wallet)
+	cfg.RPCServer, err = normalizeAddress(cfg.RPCServer, network, cfg.Wallet)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	return &cfg, remainingArgs, nil
 }
@@ -289,16 +331,13 @@ func createDefaultConfigFile(destinationPath, serverConfigPath string) error {
 		return err
 	}
 	defer serverConfigFile.Close()
-	content, err := ioutil.ReadAll(serverConfigFile)
+	content, err := io.ReadAll(serverConfigFile)
 	if err != nil {
 		return err
 	}
 
 	// Extract the rpcuser
-	rpcUserRegexp, err := regexp.Compile(`(?m)^\s*rpcuser=([^\s]+)`)
-	if err != nil {
-		return err
-	}
+	rpcUserRegexp := regexp.MustCompile(`(?m)^\s*rpcuser=([^\s]+)`)
 	userSubmatches := rpcUserRegexp.FindSubmatch(content)
 	if userSubmatches == nil {
 		// No user found, nothing to do
@@ -306,10 +345,7 @@ func createDefaultConfigFile(destinationPath, serverConfigPath string) error {
 	}
 
 	// Extract the rpcpass
-	rpcPassRegexp, err := regexp.Compile(`(?m)^\s*rpcpass=([^\s]+)`)
-	if err != nil {
-		return err
-	}
+	rpcPassRegexp := regexp.MustCompile(`(?m)^\s*rpcpass=([^\s]+)`)
 	passSubmatches := rpcPassRegexp.FindSubmatch(content)
 	if passSubmatches == nil {
 		// No password found, nothing to do
@@ -317,10 +353,7 @@ func createDefaultConfigFile(destinationPath, serverConfigPath string) error {
 	}
 
 	// Extract the notls
-	noTLSRegexp, err := regexp.Compile(`(?m)^\s*notls=(0|1)(?:\s|$)`)
-	if err != nil {
-		return err
-	}
+	noTLSRegexp := regexp.MustCompile(`(?m)^\s*notls=(0|1)(?:\s|$)`)
 	noTLSSubmatches := noTLSRegexp.FindSubmatch(content)
 
 	// Create the destination directory if it does not exists

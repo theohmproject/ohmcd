@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/btcsuite/winsvc/eventlog"
-	"github.com/btcsuite/winsvc/mgr"
-	"github.com/btcsuite/winsvc/svc"
+	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/eventlog"
+	"golang.org/x/sys/windows/svc/mgr"
 )
 
 const (
@@ -48,7 +48,7 @@ func logServiceStartOfDay(srvr *server) {
 // updates and launching btcdMain.
 type btcdService struct{}
 
-// Execute is the main entry point the winsvc package calls when receiving
+// Execute is the main entry point the svc package calls when receiving
 // information from the Windows service control manager.  It launches the
 // long-running btcdMain (which is the real meat of btcd), handles service
 // change requests, and notifies the service control manager of changes.
@@ -141,10 +141,12 @@ func installService() error {
 		return fmt.Errorf("service %s already exists", svcName)
 	}
 
-	// Install the service.
+	// Install the service.  The zero ErrorControl is ErrorIgnore, so set
+	// ErrorNormal to have Windows log a failure to start at boot.
 	service, err = serviceManager.CreateService(svcName, exePath, mgr.Config{
-		DisplayName: svcDisplayName,
-		Description: svcDesc,
+		DisplayName:  svcDisplayName,
+		Description:  svcDesc,
+		ErrorControl: mgr.ErrorNormal,
 	})
 	if err != nil {
 		return err
@@ -153,7 +155,7 @@ func installService() error {
 
 	// Support events to the event log using the standard "standard" Windows
 	// EventCreate.exe message file.  This allows easy logging of custom
-	// messges instead of needing to create our own message catalog.
+	// messages instead of needing to create our own message catalog.
 	eventlog.Remove(svcName)
 	eventsSupported := uint32(eventlog.Error | eventlog.Warning | eventlog.Info)
 	return eventlog.InstallAsEventCreate(svcName, eventsSupported)
@@ -197,7 +199,7 @@ func startService() error {
 	}
 	defer service.Close()
 
-	err = service.Start(os.Args)
+	err = service.Start(os.Args...)
 	if err != nil {
 		return fmt.Errorf("could not start service: %v", err)
 	}
@@ -275,6 +277,22 @@ func performServiceCommand(command string) error {
 // returned to the caller so the application can determine whether to exit (when
 // running as a service) or launch in normal interactive mode.
 func serviceMain() (bool, error) {
+	// Don't run as a service if the user explicitly requested it. This is
+	// needed to run btcd on Windows in CI environments like Travis.
+	// We can't use the config struct to access the value because that's not
+	// parsed yet. But we add the flag to the struct anyway so the parser
+	// won't complain about it later.
+	noService := false
+	for _, arg := range os.Args {
+		if arg == "--nowinservice" {
+			noService = true
+			break
+		}
+	}
+	if noService {
+		return false, nil
+	}
+
 	// Don't run as a service if we're running interactively (or that can't
 	// be determined due to an error).
 	isInteractive, err := svc.IsAnInteractiveSession()

@@ -9,12 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/btcsuite/btcd/btcec"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
+	"github.com/btcsuite/btcd/address/v2"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
+	"github.com/stretchr/testify/mock"
 )
 
 // TestCalcMinRequiredTxRelayFee tests the calcMinRequiredTxRelayFee API.
@@ -98,7 +100,7 @@ func TestCalcMinRequiredTxRelayFee(t *testing.T) {
 func TestCheckPkScriptStandard(t *testing.T) {
 	var pubKeys [][]byte
 	for i := 0; i < 4; i++ {
-		pk, err := btcec.NewPrivateKey(btcec.S256())
+		pk, err := btcec.NewPrivateKey()
 		if err != nil {
 			t.Fatalf("TestCheckPkScriptStandard NewPrivateKey failed: %v",
 				err)
@@ -190,7 +192,6 @@ func TestCheckPkScriptStandard(t *testing.T) {
 		if err != nil {
 			t.Fatalf("TestCheckPkScriptStandard test '%s' "+
 				"failed: %v", test.name, err)
-			continue
 		}
 		scriptClass := txscript.GetScriptClass(script)
 		got := checkPkScriptStandard(script, scriptClass)
@@ -204,7 +205,7 @@ func TestCheckPkScriptStandard(t *testing.T) {
 	}
 }
 
-// TestDust tests the isDust API.
+// TestDust tests the IsDust API.
 func TestDust(t *testing.T) {
 	pkScript := []byte{0x76, 0xa9, 0x21, 0x03, 0x2f, 0x7e, 0x43,
 		0x0a, 0xa4, 0xc9, 0xd1, 0x59, 0x43, 0x7e, 0x84, 0xb9,
@@ -266,18 +267,88 @@ func TestDust(t *testing.T) {
 			0, // no relay fee
 			true,
 		},
+		// P2A (Pay-to-Anchor) tests
+		{
+			"P2A with 239 sats (dust)",
+			wire.TxOut{
+				Value:    239,
+				PkScript: txscript.PayToAnchorScript,
+			},
+			1000,
+			true,
+		},
+		{
+			"P2A with 240 sats (not dust)",
+			wire.TxOut{
+				Value:    240,
+				PkScript: txscript.PayToAnchorScript,
+			},
+			1000,
+			false,
+		},
+		{
+			"P2A with 241 sats (not dust)",
+			wire.TxOut{
+				Value:    241,
+				PkScript: txscript.PayToAnchorScript,
+			},
+			1000,
+			false,
+		},
+		{
+			// Any positive value escapes dust when the relay fee is
+			// zero, just like the generic dust path.
+			"P2A with 240 sats and zero relay fee (not dust)",
+			wire.TxOut{
+				Value:    240,
+				PkScript: txscript.PayToAnchorScript,
+			},
+			0,
+			false,
+		},
+		{
+			// At zero relay fee the dust threshold collapses to
+			// zero, so a 239-sat P2A output is no longer dust.
+			"P2A with 239 sats and zero relay fee (not dust)",
+			wire.TxOut{
+				Value:    239,
+				PkScript: txscript.PayToAnchorScript,
+			},
+			0,
+			false,
+		},
+		{
+			// At a 100x relay fee the threshold scales to 24000
+			// sats, so a 240-sat P2A output is dust under the
+			// configured policy. This matches bitcoind's behavior.
+			"P2A with 240 sats and high relay fee (dust)",
+			wire.TxOut{
+				Value:    240,
+				PkScript: txscript.PayToAnchorScript,
+			},
+			100000,
+			true,
+		},
+		{
+			"P2A with 239 sats and high relay fee (dust)",
+			wire.TxOut{
+				Value:    239,
+				PkScript: txscript.PayToAnchorScript,
+			},
+			100000,
+			true,
+		},
 	}
 	for _, test := range tests {
-		res := isDust(&test.txOut, test.relayFee)
+		res := IsDust(&test.txOut, test.relayFee)
 		if res != test.isDust {
 			t.Fatalf("Dust test '%s' failed: want %v got %v",
 				test.name, test.isDust, res)
-			continue
 		}
 	}
 }
 
-// TestCheckTransactionStandard tests the checkTransactionStandard API.
+// TestCheckTransactionStandard tests the CheckTransactionStandard API.
 func TestCheckTransactionStandard(t *testing.T) {
 	// Create some dummy, but otherwise standard, data for transactions.
 	prevOutHash, err := chainhash.NewHashFromStr("01")
@@ -292,7 +363,7 @@ func TestCheckTransactionStandard(t *testing.T) {
 		Sequence:         wire.MaxTxInSequenceNum,
 	}
 	addrHash := [20]byte{0x01}
-	addr, err := btcutil.NewAddressPubKeyHash(addrHash[:],
+	addr, err := address.NewAddressPubKeyHash(addrHash[:],
 		&chaincfg.TestNet3Params)
 	if err != nil {
 		t.Fatalf("NewAddressPubKeyHash: unexpected error: %v", err)
@@ -464,25 +535,111 @@ func TestCheckTransactionStandard(t *testing.T) {
 			height:     300000,
 			isStandard: true,
 		},
+		{
+			name: "P2A output with 240 sats (standard)",
+			tx: wire.MsgTx{
+				Version: 1,
+				TxIn:    []*wire.TxIn{&dummyTxIn},
+				TxOut: []*wire.TxOut{{
+					Value:    240,
+					PkScript: txscript.PayToAnchorScript,
+				}},
+				LockTime: 0,
+			},
+			height:     300000,
+			isStandard: true,
+		},
+		{
+			name: "P2A output with 239 sats (dust)",
+			tx: wire.MsgTx{
+				Version: 1,
+				TxIn:    []*wire.TxIn{&dummyTxIn},
+				TxOut: []*wire.TxOut{{
+					Value:    239,
+					PkScript: txscript.PayToAnchorScript,
+				}},
+				LockTime: 0,
+			},
+			height:     300000,
+			isStandard: false,
+			code:       wire.RejectDust,
+		},
+		{
+			name: "P2A output with 1000 sats (standard)",
+			tx: wire.MsgTx{
+				Version: 1,
+				TxIn:    []*wire.TxIn{&dummyTxIn},
+				TxOut: []*wire.TxOut{{
+					Value:    1000,
+					PkScript: txscript.PayToAnchorScript,
+				}},
+				LockTime: 0,
+			},
+			height:     300000,
+			isStandard: true,
+		},
+		{
+			name: "Multiple P2A outputs (standard)",
+			tx: wire.MsgTx{
+				Version: 1,
+				TxIn:    []*wire.TxIn{&dummyTxIn},
+				TxOut: []*wire.TxOut{
+					{
+						Value:    250,
+						PkScript: txscript.PayToAnchorScript,
+					},
+					{
+						Value:    300,
+						PkScript: txscript.PayToAnchorScript,
+					},
+					{
+						Value:    500,
+						PkScript: txscript.PayToAnchorScript,
+					},
+				},
+				LockTime: 0,
+			},
+			height:     300000,
+			isStandard: true,
+		},
+		{
+			name: "P2A mixed with regular outputs (standard)",
+			tx: wire.MsgTx{
+				Version: 1,
+				TxIn:    []*wire.TxIn{&dummyTxIn},
+				TxOut: []*wire.TxOut{
+					&dummyTxOut,
+					{
+						Value:    250,
+						PkScript: txscript.PayToAnchorScript,
+					},
+				},
+				LockTime: 0,
+			},
+			height:     300000,
+			isStandard: true,
+		},
 	}
 
 	pastMedianTime := time.Now()
 	for _, test := range tests {
 		// Ensure standardness is as expected.
-		err := checkTransactionStandard(btcutil.NewTx(&test.tx),
-			test.height, pastMedianTime, DefaultMinRelayTxFee, 1)
+		err := CheckTransactionStandard(
+			btcutil.NewTx(&test.tx), test.height, pastMedianTime,
+			DefaultMinRelayTxFee, 1,
+		)
 		if err == nil && test.isStandard {
 			// Test passes since function returned standard for a
 			// transaction which is intended to be standard.
 			continue
 		}
 		if err == nil && !test.isStandard {
-			t.Errorf("checkTransactionStandard (%s): standard when "+
+			t.Errorf("CheckTransactionStandard (%s): standard when "+
 				"it should not be", test.name)
 			continue
 		}
 		if err != nil && test.isStandard {
-			t.Errorf("checkTransactionStandard (%s): nonstandard "+
+			t.Errorf("CheckTransactionStandard (%s): nonstandard "+
 				"when it should not be: %v", test.name, err)
 			continue
 		}
@@ -490,23 +647,138 @@ func TestCheckTransactionStandard(t *testing.T) {
 		// Ensure error type is a TxRuleError inside of a RuleError.
 		rerr, ok := err.(RuleError)
 		if !ok {
-			t.Errorf("checkTransactionStandard (%s): unexpected "+
+			t.Errorf("CheckTransactionStandard (%s): unexpected "+
 				"error type - got %T", test.name, err)
 			continue
 		}
 		txrerr, ok := rerr.Err.(TxRuleError)
 		if !ok {
-			t.Errorf("checkTransactionStandard (%s): unexpected "+
+			t.Errorf("CheckTransactionStandard (%s): unexpected "+
 				"error type - got %T", test.name, rerr.Err)
 			continue
 		}
 
 		// Ensure the reject code is the expected one.
 		if txrerr.RejectCode != test.code {
-			t.Errorf("checkTransactionStandard (%s): unexpected "+
+			t.Errorf("CheckTransactionStandard (%s): unexpected "+
 				"error code - got %v, want %v", test.name,
 				txrerr.RejectCode, test.code)
 			continue
 		}
+	}
+}
+
+// mockUtxoEntry mocks the utxoEntry interface using testify/mock.
+type mockUtxoEntry struct {
+	mock.Mock
+}
+
+// PkScript returns the public key script.
+func (m *mockUtxoEntry) PkScript() []byte {
+	args := m.Called()
+	return args.Get(0).([]byte)
+}
+
+// mockUtxoView mocks the utxoView interface using testify/mock.
+type mockUtxoView struct {
+	mock.Mock
+}
+
+// LookupEntry returns the entry for a given outpoint.
+func (m *mockUtxoView) LookupEntry(op wire.OutPoint) utxoEntry {
+	args := m.Called(op)
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(utxoEntry)
+}
+
+// TestP2ASpendingStandardness tests that P2A outputs require empty witness
+// and empty signature script to be considered standard.
+func TestP2ASpendingStandardness(t *testing.T) {
+	// Create a previous transaction with a P2A output.
+	prevTxHash, _ := chainhash.NewHashFromStr("0101010101010101010101010101010101010101010101010101010101010101")
+	prevOut := wire.OutPoint{Hash: *prevTxHash, Index: 0}
+
+	// Create mocked UTXO entry and view.
+	mockEntry := new(mockUtxoEntry)
+	mockEntry.On("PkScript").Return(txscript.PayToAnchorScript)
+
+	mockView := new(mockUtxoView)
+	mockView.On("LookupEntry", prevOut).Return(mockEntry)
+
+	tests := []struct {
+		name       string
+		sigScript  []byte
+		witness    wire.TxWitness
+		shouldFail bool
+	}{
+		{
+			name:       "P2A with empty witness and empty sigscript (standard)",
+			sigScript:  []byte{},
+			witness:    wire.TxWitness{},
+			shouldFail: false,
+		},
+		{
+			name:       "P2A with empty sigscript and non-empty witness (not standard)",
+			sigScript:  []byte{},
+			witness:    wire.TxWitness{[]byte{0x01}},
+			shouldFail: true,
+		},
+		{
+			name:       "P2A with non-empty sigscript (not standard)",
+			sigScript:  []byte{0x01, 0x02},
+			witness:    wire.TxWitness{},
+			shouldFail: true,
+		},
+		{
+			name:       "P2A with both non-empty (not standard)",
+			sigScript:  []byte{0x01},
+			witness:    wire.TxWitness{[]byte{0x02}},
+			shouldFail: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			// Create a transaction spending the P2A output.
+			tx := wire.NewMsgTx(2)
+			tx.AddTxIn(&wire.TxIn{
+				PreviousOutPoint: prevOut,
+				SignatureScript:  test.sigScript,
+				Witness:          test.witness,
+			})
+			// Add a dummy output.
+			dummyPkScript := []byte{
+				txscript.OP_DUP,
+				txscript.OP_HASH160,
+				txscript.OP_DATA_20,
+			}
+			dummyPkScript = append(dummyPkScript, make([]byte, 20)...)
+			dummyPkScript = append(dummyPkScript,
+				txscript.OP_EQUALVERIFY, txscript.OP_CHECKSIG)
+
+			tx.AddTxOut(&wire.TxOut{
+				Value:    900,
+				PkScript: dummyPkScript,
+			})
+
+			btcTx := btcutil.NewTx(tx)
+			err := checkInputsStandardWithView(btcTx, mockView)
+
+			if test.shouldFail {
+				if err == nil {
+					t.Errorf("Expected error for P2A with non-empty witness/sigscript, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error for valid P2A spend: %v", err)
+				}
+			}
+
+			// Verify that the mock was called.
+			mockView.AssertExpectations(t)
+			mockEntry.AssertExpectations(t)
+		})
 	}
 }

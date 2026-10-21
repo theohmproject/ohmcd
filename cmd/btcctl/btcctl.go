@@ -49,6 +49,7 @@ func usage(errorMessage string) {
 func main() {
 	cfg, args, err := loadConfig()
 	if err != nil {
+		fmt.Fprintln(os.Stderr, "Failed to load config:", err)
 		os.Exit(1)
 	}
 	if len(args) < 1 {
@@ -127,7 +128,7 @@ func main() {
 
 	// Marshal the command into a JSON-RPC byte slice in preparation for
 	// sending it to the RPC server.
-	marshalledJSON, err := btcjson.MarshalCmd(1, cmd)
+	marshalledJSON, err := btcjson.MarshalCmd(btcjson.RpcVersion1, 1, cmd)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

@@ -1,9 +1,10 @@
 btcd
 ====
 
-[![Build Status](https://travis-ci.org/btcsuite/btcd.png?branch=master)](https://travis-ci.org/btcsuite/btcd)
-[![ISC License](http://img.shields.io/badge/license-ISC-blue.svg)](http://copyfree.org)
-[![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](http://godoc.org/github.com/btcsuite/btcd)
+[![Build Status](https://github.com/btcsuite/btcd/workflows/Build%20and%20Test/badge.svg)](https://github.com/btcsuite/btcd/actions)
+[![Coverage Status](https://coveralls.io/repos/github/btcsuite/btcd/badge.svg?branch=master)](https://coveralls.io/github/btcsuite/btcd?branch=master)
+[![ISC License](https://img.shields.io/badge/license-ISC-blue.svg)](http://copyfree.org)
+[![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](https://pkg.go.dev/github.com/btcsuite/btcd)
 
 btcd is an alternative full node bitcoin implementation written in Go (golang).
 
@@ -26,7 +27,7 @@ transactions based on miner requirements ("standard" transactions).
 
 One key difference between btcd and Bitcoin Core is that btcd does *NOT* include
 wallet functionality and this was a very intentional design decision.  See the
-blog entry [here](https://blog.conformal.com/btcd-not-your-moms-bitcoin-daemon)
+blog entry [here](https://web.archive.org/web/20171125143919/https://blog.conformal.com/btcd-not-your-moms-bitcoin-daemon)
 for more details.  This means you can't actually make or receive payments
 directly with btcd.  That functionality is provided by the
 [btcwallet](https://github.com/btcsuite/btcwallet) and
@@ -35,11 +36,30 @@ which are both under active development.
 
 ## Requirements
 
-[Go](http://golang.org) 1.11 or newer.
+[Go](http://golang.org) 1.26.10 or newer.
+
+### Go version policy
+
+btcd is built with the newest Go release and requires the previous one, which
+still receives point releases. Both are kept at the latest point release of
+their branch:
+
+- CI, the Docker images and release binaries are built with Go 1.27.3, the
+  `GO_VERSION` in `.github/workflows/main.yml`.
+- The `go` line in every `go.mod`, which sets the minimum Go version and the
+  language version, is Go 1.26.10.
+
+The `go` directive sets only a minimum version, so it cannot encode the
+patched release floor for each supported Go branch. Use Go 1.26.10 or newer
+on the Go 1.26 branch, and Go 1.27.3 or newer on the Go 1.27 branch. Go
+1.27.0 through 1.27.2 do not include the CVE-2026-111943 mitigation.
+
+Both are bumped when Go publishes a point release, and both move up a branch
+when a new major version of Go is released. A weekly CI job checks this against
+the releases listed on go.dev; `make check-go-versions` runs the same check
+locally.
 
 ## Installation
-
-#### Windows - MSI Available
 
 https://github.com/btcsuite/btcd/releases
 
@@ -64,7 +84,7 @@ recommended that `GOPATH` is set to a directory in your home directory such as
 
 ```bash
 $ cd $GOPATH/src/github.com/btcsuite/btcd
-$ GO111MODULE=on go install -v . ./cmd/...
+$ go install -v . ./cmd/...
 ```
 
 - btcd (and utilities) will now be installed in ```$GOPATH/bin```.  If you did
@@ -73,10 +93,6 @@ $ GO111MODULE=on go install -v . ./cmd/...
 
 ## Updating
 
-#### Windows
-
-Install a newer MSI
-
 #### Linux/BSD/MacOSX/POSIX - Build from Source
 
 - Run the following commands to update btcd, all dependencies, and install it:
@@ -84,7 +100,7 @@ Install a newer MSI
 ```bash
 $ cd $GOPATH/src/github.com/btcsuite/btcd
 $ git pull
-$ GO111MODULE=on go install -v . ./cmd/...
+$ go install -v . ./cmd/...
 ```
 
 ## Getting Started
@@ -92,10 +108,6 @@ $ GO111MODULE=on go install -v . ./cmd/...
 btcd has several configuration options available to tweak how it runs, but all
 of the basic operations described in the intro section work with zero
 configuration.
-
-#### Windows (Installed from MSI)
-
-Launch btcd from your Start menu.
 
 #### Linux/BSD/POSIX/Source
 
@@ -105,9 +117,9 @@ $ ./btcd
 
 ## IRC
 
-- irc.freenode.net
+- irc.libera.chat
 - channel #btcd
-- [webchat](https://webchat.freenode.net/?channels=btcd)
+- [webchat](https://web.libera.chat/gamja/?channels=btcd)
 
 ## Issue Tracker
 
@@ -118,25 +130,12 @@ is used for this project.
 
 The documentation is a work-in-progress.  It is located in the [docs](https://github.com/btcsuite/btcd/tree/master/docs) folder.
 
-## GPG Verification Key
+## Release Verification
 
-All official release tags are signed by Conformal so users can ensure the code
-has not been tampered with and is coming from the btcsuite developers.  To
-verify the signature perform the following:
-
-- Download the Conformal public key:
-  https://raw.githubusercontent.com/btcsuite/btcd/master/release/GIT-GPG-KEY-conformal.txt
-
-- Import the public key into your GPG keyring:
-  ```bash
-  gpg --import GIT-GPG-KEY-conformal.txt
-  ```
-
-- Verify the release tag with the following command where `TAG_NAME` is a
-  placeholder for the specific tag:
-  ```bash
-  git tag -v TAG_NAME
-  ```
+Please see our [documentation on the current build/verification
+process](https://github.com/btcsuite/btcd/tree/master/release) for all our
+releases for information on how to verify the integrity of published releases
+using our reproducible build system.
 
 ## License
 

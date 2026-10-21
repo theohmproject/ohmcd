@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 // maxFailedAttempts is the maximum number of successive failed connection
@@ -120,8 +122,14 @@ type Config struct {
 	// connections in that case.
 	OnAccept func(net.Conn)
 
-	// TargetOutbound is the number of outbound network connections to
-	// maintain. Defaults to 8.
+	// MaxInbound limits the number of accepted inbound connections that may
+	// be active at once.  A nil value preserves the historical unlimited
+	// behavior, while a pointer to zero disables inbound connections.
+	MaxInbound *uint32
+
+	// TargetOutbound is the number of automatic outbound network connections
+	// to maintain. Connections made through Connect are additional. Defaults
+	// to 8.
 	TargetOutbound uint32
 
 	// RetryDuration is the duration to wait before retrying connection
@@ -153,6 +161,22 @@ type registerPending struct {
 	done chan struct{}
 }
 
+// ConnOption is a functional option type for various connection operations.
+type ConnOption func(*connOptions)
+
+// connOptions holds the options for a connection operation.
+type connOptions struct {
+	triggerReconnect bool
+}
+
+// WithTriggerReconnect is a functional option that forces a reconnect attempt
+// after disconnection, even for non-permanent peers.
+func WithTriggerReconnect() ConnOption {
+	return func(opts *connOptions) {
+		opts.triggerReconnect = true
+	}
+}
+
 // handleConnected is used to queue a successful connection.
 type handleConnected struct {
 	c    *ConnReq
@@ -161,8 +185,9 @@ type handleConnected struct {
 
 // handleDisconnected is used to remove a connection.
 type handleDisconnected struct {
-	id    uint64
-	retry bool
+	id               uint64
+	retry            bool
+	triggerReconnect bool
 }
 
 // handleFailed is used to remove a pending connection.
@@ -174,15 +199,64 @@ type handleFailed struct {
 // ConnManager provides a manager to handle network connections.
 type ConnManager struct {
 	// The following variables must only be used atomically.
-	connReqCount uint64
-	start        int32
-	stop         int32
+	connReqCount    uint64
+	inboundRejected uint64
+	start           int32
+	stop            int32
 
 	cfg            Config
 	wg             sync.WaitGroup
 	failedAttempts uint64
 	requests       chan interface{}
+	inboundSlots   chan struct{}
+	inboundLog     rate.Sometimes
 	quit           chan struct{}
+}
+
+// limitedInboundConn releases an inbound connection slot exactly once when
+// the connection is closed.
+type limitedInboundConn struct {
+	net.Conn
+
+	releaseOnce sync.Once
+	release     func()
+}
+
+// Close closes the underlying connection and releases its inbound slot.
+func (c *limitedInboundConn) Close() error {
+	err := c.Conn.Close()
+	c.releaseOnce.Do(c.release)
+
+	return err
+}
+
+// limitInbound attempts to reserve an inbound slot for conn.  The returned
+// connection releases the slot when it is closed.
+func (cm *ConnManager) limitInbound(conn net.Conn) (net.Conn, bool) {
+	if cm.inboundSlots == nil {
+		return conn, true
+	}
+
+	select {
+	case cm.inboundSlots <- struct{}{}:
+		return &limitedInboundConn{
+			Conn: conn,
+			release: func() {
+				<-cm.inboundSlots
+			},
+		}, true
+
+	default:
+		rejected := atomic.AddUint64(&cm.inboundRejected, 1)
+		cm.inboundLog.Do(func() {
+			log.Warnf("Inbound connection limit reached: "+
+				"rejected=%d remote=%s", rejected,
+				conn.RemoteAddr())
+		})
+
+		_ = conn.Close()
+		return nil, false
+	}
 }
 
 // handleFailedConn handles a connection failed due to a disconnect or any
@@ -190,11 +264,11 @@ type ConnManager struct {
 // retry duration. Otherwise, if required, it makes a new connection request.
 // After maxFailedConnectionAttempts new connections will be retried after the
 // configured retry duration.
-func (cm *ConnManager) handleFailedConn(c *ConnReq) {
+func (cm *ConnManager) handleFailedConn(c *ConnReq, triggerReconnect bool) {
 	if atomic.LoadInt32(&cm.stop) != 0 {
 		return
 	}
-	if c.Permanent {
+	if c.Permanent || triggerReconnect {
 		c.retryCount++
 		d := time.Duration(c.retryCount) * cm.cfg.RetryDuration
 		if d > maxRetryDuration {
@@ -210,11 +284,16 @@ func (cm *ConnManager) handleFailedConn(c *ConnReq) {
 			log.Debugf("Max failed connection attempts reached: [%d] "+
 				"-- retrying connection in: %v", maxFailedAttempts,
 				cm.cfg.RetryDuration)
+			theId := c.id
 			time.AfterFunc(cm.cfg.RetryDuration, func() {
+				cm.Remove(theId)
 				cm.NewConnReq()
 			})
 		} else {
-			go cm.NewConnReq()
+			go func(theId uint64) {
+				cm.Remove(theId)
+				cm.NewConnReq()
+			}(c.id)
 		}
 	}
 }
@@ -291,7 +370,6 @@ out:
 					log.Debugf("Canceling: %v", connReq)
 					delete(pending, msg.id)
 					continue
-
 				}
 
 				// An existing connection was located, mark as
@@ -329,7 +407,7 @@ out:
 					log.Debugf("Reconnecting to %v",
 						connReq)
 					pending[msg.id] = connReq
-					cm.handleFailedConn(connReq)
+					cm.handleFailedConn(connReq, msg.triggerReconnect)
 				}
 
 			case handleFailed:
@@ -344,7 +422,7 @@ out:
 				connReq.updateState(ConnFailing)
 				log.Debugf("Failed to connect to %v: %v",
 					connReq, msg.err)
-				cm.handleFailedConn(connReq)
+				cm.handleFailedConn(connReq, false)
 			}
 
 		case <-cm.quit:
@@ -408,6 +486,14 @@ func (cm *ConnManager) Connect(c *ConnReq) {
 	if atomic.LoadInt32(&cm.stop) != 0 {
 		return
 	}
+
+	// During the time we wait for retry there is a chance that
+	// this connection was already cancelled
+	if c.State() == ConnCanceled {
+		log.Debugf("Ignoring connect for canceled connreq=%v", c)
+		return
+	}
+
 	if atomic.LoadUint64(&c.id) == 0 {
 		atomic.StoreUint64(&c.id, atomic.AddUint64(&cm.connReqCount, 1))
 
@@ -450,14 +536,21 @@ func (cm *ConnManager) Connect(c *ConnReq) {
 
 // Disconnect disconnects the connection corresponding to the given connection
 // id. If permanent, the connection will be retried with an increasing backoff
-// duration.
-func (cm *ConnManager) Disconnect(id uint64) {
+// duration. Functional options can be used to modify behavior, such as forcing
+// a reconnect attempt via WithTriggerReconnect.
+func (cm *ConnManager) Disconnect(id uint64, options ...ConnOption) {
 	if atomic.LoadInt32(&cm.stop) != 0 {
 		return
 	}
+	opts := connOptions{}
+	for _, option := range options {
+		option(&opts)
+	}
 
 	select {
-	case cm.requests <- handleDisconnected{id, true}:
+	case cm.requests <- handleDisconnected{
+		id: id, retry: true, triggerReconnect: opts.triggerReconnect,
+	}:
 	case <-cm.quit:
 	}
 }
@@ -473,7 +566,7 @@ func (cm *ConnManager) Remove(id uint64) {
 	}
 
 	select {
-	case cm.requests <- handleDisconnected{id, false}:
+	case cm.requests <- handleDisconnected{id: id, retry: false}:
 	case <-cm.quit:
 	}
 }
@@ -491,6 +584,12 @@ func (cm *ConnManager) listenHandler(listener net.Listener) {
 			}
 			continue
 		}
+
+		conn, ok := cm.limitInbound(conn)
+		if !ok {
+			continue
+		}
+
 		go cm.cfg.OnAccept(conn)
 	}
 
@@ -512,13 +611,13 @@ func (cm *ConnManager) Start() {
 	// Start all the listeners so long as the caller requested them and
 	// provided a callback to be invoked when connections are accepted.
 	if cm.cfg.OnAccept != nil {
-		for _, listner := range cm.cfg.Listeners {
+		for _, listener := range cm.cfg.Listeners {
 			cm.wg.Add(1)
-			go cm.listenHandler(listner)
+			go cm.listenHandler(listener)
 		}
 	}
 
-	for i := atomic.LoadUint64(&cm.connReqCount); i < uint64(cm.cfg.TargetOutbound); i++ {
+	for i := uint32(0); i < cm.cfg.TargetOutbound; i++ {
 		go cm.NewConnReq()
 	}
 }
@@ -561,9 +660,14 @@ func New(cfg *Config) (*ConnManager, error) {
 		cfg.TargetOutbound = defaultTargetOutbound
 	}
 	cm := ConnManager{
-		cfg:      *cfg, // Copy so caller can't mutate
-		requests: make(chan interface{}),
-		quit:     make(chan struct{}),
+		cfg:        *cfg, // Copy so caller can't mutate.
+		requests:   make(chan interface{}),
+		inboundLog: rate.Sometimes{First: 3, Interval: 30 * time.Second},
+		quit:       make(chan struct{}),
 	}
+	if cfg.MaxInbound != nil {
+		cm.inboundSlots = make(chan struct{}, int(*cfg.MaxInbound))
+	}
+
 	return &cm, nil
 }

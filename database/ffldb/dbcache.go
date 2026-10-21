@@ -6,14 +6,17 @@ package ffldb
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"os"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/btcsuite/btcd/database/internal/treap"
-	"github.com/btcsuite/goleveldb/leveldb"
-	"github.com/btcsuite/goleveldb/leveldb/iterator"
-	"github.com/btcsuite/goleveldb/leveldb/util"
+	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/iterator"
+	"github.com/syndtr/goleveldb/leveldb/util"
 )
 
 const (
@@ -511,6 +514,12 @@ func (c *dbCache) flush() error {
 
 	// Perform all leveldb updates using an atomic transaction.
 	if err := c.commitTreaps(cachedKeys, cachedRemove); err != nil {
+		if errors.Is(err, syscall.ENOSPC) {
+			log.Errorf("%v. Cannot save any more blocks "+
+				"due to the disk being full "+
+				"-- exiting", err)
+			os.Exit(1)
+		}
 		return err
 	}
 
@@ -569,6 +578,12 @@ func (c *dbCache) commitTx(tx *transaction) error {
 	// database if a flush is needed.
 	if c.needsFlush(tx) {
 		if err := c.flush(); err != nil {
+			if errors.Is(err, syscall.ENOSPC) {
+				log.Errorf("%v. Cannot save any more blocks "+
+					"due to the disk being full "+
+					"-- exiting", err)
+				os.Exit(1)
+			}
 			return err
 		}
 
@@ -596,19 +611,25 @@ func (c *dbCache) commitTx(tx *transaction) error {
 	c.cacheLock.RUnlock()
 
 	// Apply every key to add in the database transaction to the cache.
+	pendingKVs := make([]treap.KVPair, 0, tx.pendingKeys.Len())
 	tx.pendingKeys.ForEach(func(k, v []byte) bool {
+		pendingKVs = append(pendingKVs, treap.KVPair{Key: k, Value: v})
+
 		newCachedRemove = newCachedRemove.Delete(k)
-		newCachedKeys = newCachedKeys.Put(k, v)
 		return true
 	})
+	newCachedKeys = newCachedKeys.Put(pendingKVs...)
 	tx.pendingKeys = nil
 
 	// Apply every key to remove in the database transaction to the cache.
+	pendingRemoveKVs := make([]treap.KVPair, 0, tx.pendingRemove.Len())
 	tx.pendingRemove.ForEach(func(k, v []byte) bool {
+		pendingRemoveKVs = append(pendingRemoveKVs, treap.KVPair{Key: k, Value: v})
+
 		newCachedKeys = newCachedKeys.Delete(k)
-		newCachedRemove = newCachedRemove.Put(k, nil)
 		return true
 	})
+	newCachedRemove = newCachedRemove.Put(pendingRemoveKVs...)
 	tx.pendingRemove = nil
 
 	// Atomically replace the immutable treaps which hold the cached keys to

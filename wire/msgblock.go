@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/chainhash/v2"
 )
 
 // defaultTransactionAlloc is the default size used for the backing array
@@ -45,6 +45,20 @@ type MsgBlock struct {
 	Transactions []*MsgTx
 }
 
+// Copy creates a deep copy of MsgBlock.
+func (msg *MsgBlock) Copy() *MsgBlock {
+	block := &MsgBlock{
+		Header:       msg.Header,
+		Transactions: make([]*MsgTx, len(msg.Transactions)),
+	}
+
+	for i, tx := range msg.Transactions {
+		block.Transactions[i] = tx.Copy()
+	}
+
+	return block
+}
+
 // AddTransaction adds a transaction to the message.
 func (msg *MsgBlock) AddTransaction(tx *MsgTx) error {
 	msg.Transactions = append(msg.Transactions, tx)
@@ -62,12 +76,15 @@ func (msg *MsgBlock) ClearTransactions() {
 // See Deserialize for decoding blocks stored to disk, such as in a database, as
 // opposed to decoding blocks from the wire.
 func (msg *MsgBlock) BtcDecode(r io.Reader, pver uint32, enc MessageEncoding) error {
-	err := readBlockHeader(r, pver, &msg.Header)
+	buf := binarySerializer.Borrow()
+	defer binarySerializer.Return(buf)
+
+	err := readBlockHeaderBuf(r, pver, &msg.Header, buf)
 	if err != nil {
 		return err
 	}
 
-	txCount, err := ReadVarInt(r, pver)
+	txCount, err := ReadVarIntBuf(r, pver, buf)
 	if err != nil {
 		return err
 	}
@@ -80,11 +97,23 @@ func (msg *MsgBlock) BtcDecode(r io.Reader, pver uint32, enc MessageEncoding) er
 			"[count %d, max %d]", txCount, maxTxPerBlock)
 		return messageError("MsgBlock.BtcDecode", str)
 	}
+	if err := validateElementCount(
+		r, txCount, minTxPayload,
+	); err != nil {
+		return err
+	}
+
+	// A single arena is shared by every transaction in the block.  Each
+	// transaction's btcDecode rewinds it, which is safe because the
+	// scripts are copied into their final exactly-sized buffer before the
+	// next transaction is decoded.
+	ar := borrowScriptArena()
+	defer ar.release()
 
 	msg.Transactions = make([]*MsgTx, 0, txCount)
 	for i := uint64(0); i < txCount; i++ {
 		tx := MsgTx{}
-		err := tx.BtcDecode(r, pver, enc)
+		err := tx.btcDecode(r, pver, enc, buf, ar)
 		if err != nil {
 			return err
 		}
@@ -129,15 +158,18 @@ func (msg *MsgBlock) DeserializeNoWitness(r io.Reader) error {
 func (msg *MsgBlock) DeserializeTxLoc(r *bytes.Buffer) ([]TxLoc, error) {
 	fullLen := r.Len()
 
+	buf := binarySerializer.Borrow()
+	defer binarySerializer.Return(buf)
+
 	// At the current time, there is no difference between the wire encoding
 	// at protocol version 0 and the stable long-term storage format.  As
 	// a result, make use of existing wire protocol functions.
-	err := readBlockHeader(r, 0, &msg.Header)
+	err := readBlockHeaderBuf(r, 0, &msg.Header, buf)
 	if err != nil {
 		return nil, err
 	}
 
-	txCount, err := ReadVarInt(r, 0)
+	txCount, err := ReadVarIntBuf(r, 0, buf)
 	if err != nil {
 		return nil, err
 	}
@@ -150,6 +182,14 @@ func (msg *MsgBlock) DeserializeTxLoc(r *bytes.Buffer) ([]TxLoc, error) {
 			"[count %d, max %d]", txCount, maxTxPerBlock)
 		return nil, messageError("MsgBlock.DeserializeTxLoc", str)
 	}
+	if err := validateElementCount(
+		r, txCount, minTxPayload,
+	); err != nil {
+		return nil, err
+	}
+
+	ar := borrowScriptArena()
+	defer ar.release()
 
 	// Deserialize each transaction while keeping track of its location
 	// within the byte stream.
@@ -158,7 +198,7 @@ func (msg *MsgBlock) DeserializeTxLoc(r *bytes.Buffer) ([]TxLoc, error) {
 	for i := uint64(0); i < txCount; i++ {
 		txLocs[i].TxStart = fullLen - r.Len()
 		tx := MsgTx{}
-		err := tx.Deserialize(r)
+		err := tx.btcDecode(r, 0, WitnessEncoding, buf, ar)
 		if err != nil {
 			return nil, err
 		}
@@ -174,18 +214,21 @@ func (msg *MsgBlock) DeserializeTxLoc(r *bytes.Buffer) ([]TxLoc, error) {
 // See Serialize for encoding blocks to be stored to disk, such as in a
 // database, as opposed to encoding blocks for the wire.
 func (msg *MsgBlock) BtcEncode(w io.Writer, pver uint32, enc MessageEncoding) error {
-	err := writeBlockHeader(w, pver, &msg.Header)
+	buf := binarySerializer.Borrow()
+	defer binarySerializer.Return(buf)
+
+	err := writeBlockHeaderBuf(w, pver, &msg.Header, buf)
 	if err != nil {
 		return err
 	}
 
-	err = WriteVarInt(w, pver, uint64(len(msg.Transactions)))
+	err = WriteVarIntBuf(w, pver, uint64(len(msg.Transactions)), buf)
 	if err != nil {
 		return err
 	}
 
 	for _, tx := range msg.Transactions {
-		err = tx.BtcEncode(w, pver, enc)
+		err = tx.btcEncode(w, pver, enc, buf)
 		if err != nil {
 			return err
 		}
@@ -216,7 +259,7 @@ func (msg *MsgBlock) Serialize(w io.Writer) error {
 
 // SerializeNoWitness encodes a block to w using an identical format to
 // Serialize, with all (if any) witness data stripped from all transactions.
-// This method is provided in additon to the regular Serialize, in order to
+// This method is provided in addition to the regular Serialize, in order to
 // allow one to selectively encode transaction witness data to non-upgraded
 // peers which are unaware of the new encoding.
 func (msg *MsgBlock) SerializeNoWitness(w io.Writer) error {

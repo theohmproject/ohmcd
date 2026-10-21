@@ -5,17 +5,18 @@
 package ffldb_test
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"testing"
 
-	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/btcutil/v2"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
 	"github.com/btcsuite/btcd/database"
 	"github.com/btcsuite/btcd/database/ffldb"
-	"github.com/btcsuite/btcutil"
 )
 
 // dbType is the database type name for this driver.
@@ -102,14 +103,13 @@ func TestCreateOpenFail(t *testing.T) {
 
 	// Ensure operations against a closed database return the expected
 	// error.
-	dbPath := filepath.Join(os.TempDir(), "ffldb-createfail")
+	dbPath := filepath.Join(t.TempDir(), "ffldb-createfail")
 	_ = os.RemoveAll(dbPath)
 	db, err := database.Create(dbType, dbPath, blockDataNet)
 	if err != nil {
 		t.Errorf("Create: unexpected error: %v", err)
 		return
 	}
-	defer os.RemoveAll(dbPath)
 	db.Close()
 
 	wantErrCode = database.ErrDbNotOpen
@@ -153,14 +153,13 @@ func TestPersistence(t *testing.T) {
 	t.Parallel()
 
 	// Create a new database to run tests against.
-	dbPath := filepath.Join(os.TempDir(), "ffldb-persistencetest")
+	dbPath := filepath.Join(t.TempDir(), "ffldb-persistencetest")
 	_ = os.RemoveAll(dbPath)
 	db, err := database.Create(dbType, dbPath, blockDataNet)
 	if err != nil {
 		t.Errorf("Failed to create test database (%s) %v", dbType, err)
 		return
 	}
-	defer os.RemoveAll(dbPath)
 	defer db.Close()
 
 	// Create a bucket, put some values into it, and store a block so they
@@ -254,19 +253,205 @@ func TestPersistence(t *testing.T) {
 	}
 }
 
+// TestPrune tests that the older .fdb files are deleted with a call to prune.
+func TestPrune(t *testing.T) {
+	t.Parallel()
+
+	// Create a new database to run tests against.
+	dbPath := t.TempDir()
+	db, err := database.Create(dbType, dbPath, blockDataNet)
+	if err != nil {
+		t.Errorf("Failed to create test database (%s) %v", dbType, err)
+		return
+	}
+	defer db.Close()
+
+	blockFileSize := uint64(2048)
+
+	testfn := func(t *testing.T, db database.DB) {
+		// Load the test blocks and save in the test context for use throughout
+		// the tests.
+		blocks, err := loadBlocks(t, blockDataFile, blockDataNet)
+		if err != nil {
+			t.Errorf("loadBlocks: Unexpected error: %v", err)
+			return
+		}
+		err = db.Update(func(tx database.Tx) error {
+			for i, block := range blocks {
+				err := tx.StoreBlock(block)
+				if err != nil {
+					return fmt.Errorf("StoreBlock #%d: unexpected error: "+
+						"%v", i, err)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		blockHashMap := make(map[chainhash.Hash][]byte, len(blocks))
+		for _, block := range blocks {
+			bytes, err := block.Bytes()
+			if err != nil {
+				t.Fatal(err)
+			}
+			blockHashMap[*block.Hash()] = bytes
+		}
+
+		err = db.Update(func(tx database.Tx) error {
+			_, err := tx.PruneBlocks(1024)
+			if err == nil {
+				return fmt.Errorf("Expected an error when attempting to prune" +
+					"below the maxFileSize")
+			}
+
+			_, err = tx.PruneBlocks(0)
+			if err == nil {
+				return fmt.Errorf("Expected an error when attempting to prune" +
+					"below the maxFileSize")
+			}
+
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = db.View(func(tx database.Tx) error {
+			pruned, err := tx.BeenPruned()
+			if err != nil {
+				return err
+			}
+
+			if pruned {
+				err = fmt.Errorf("The database hasn't been pruned but " +
+					"BeenPruned returned true")
+			}
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Open the first block file before the pruning happens in the
+		// code snippet below.  This let's us test that block files are
+		// properly closed before attempting to delete them.
+		err = db.View(func(tx database.Tx) error {
+			_, err := tx.FetchBlock(blocks[0].Hash())
+			if err != nil {
+				return err
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var deletedBlocks []chainhash.Hash
+
+		// This should leave 3 files on disk.
+		err = db.Update(func(tx database.Tx) error {
+			deletedBlocks, err = tx.PruneBlocks(blockFileSize * 3)
+			if err != nil {
+				return err
+			}
+
+			pruned, err := tx.BeenPruned()
+			if err != nil {
+				return err
+			}
+
+			if pruned {
+				err = fmt.Errorf("The database hasn't been committed yet " +
+					"but files were already deleted")
+			}
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// The only error we can get is a bad pattern error.  Since we're hardcoding
+		// the pattern, we should not have an error at runtime.
+		files, _ := filepath.Glob(filepath.Join(dbPath, "*.fdb"))
+		if len(files) != 3 {
+			t.Fatalf("Expected to find %d files but got %d",
+				3, len(files))
+		}
+
+		err = db.View(func(tx database.Tx) error {
+			pruned, err := tx.BeenPruned()
+			if err != nil {
+				return err
+			}
+
+			if !pruned {
+				err = fmt.Errorf("The database has been pruned but " +
+					"BeenPruned returned false")
+			}
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Check that all the blocks that say were deleted are deleted from the
+		// block index bucket as well.
+		err = db.View(func(tx database.Tx) error {
+			for _, deletedBlock := range deletedBlocks {
+				_, err := tx.FetchBlock(&deletedBlock)
+				if dbErr, ok := err.(database.Error); !ok ||
+					dbErr.ErrorCode != database.ErrBlockNotFound {
+
+					return fmt.Errorf("Expected ErrBlockNotFound "+
+						"but got %v", dbErr)
+				}
+			}
+
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Check that the not deleted blocks are present.
+		for _, deletedBlock := range deletedBlocks {
+			delete(blockHashMap, deletedBlock)
+		}
+		err = db.View(func(tx database.Tx) error {
+			for hash, wantBytes := range blockHashMap {
+				gotBytes, err := tx.FetchBlock(&hash)
+				if err != nil {
+					return err
+				}
+				if !bytes.Equal(gotBytes, wantBytes) {
+					return fmt.Errorf("got bytes %x, want bytes %x",
+						gotBytes, wantBytes)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	ffldb.TstRunWithMaxBlockFileSize(db, uint32(blockFileSize), func() {
+		testfn(t, db)
+	})
+}
+
 // TestInterface performs all interfaces tests for this database driver.
 func TestInterface(t *testing.T) {
 	t.Parallel()
 
 	// Create a new database to run tests against.
-	dbPath := filepath.Join(os.TempDir(), "ffldb-interfacetest")
+	dbPath := filepath.Join(t.TempDir(), "ffldb-interfacetest")
 	_ = os.RemoveAll(dbPath)
 	db, err := database.Create(dbType, dbPath, blockDataNet)
 	if err != nil {
 		t.Errorf("Failed to create test database (%s) %v", dbType, err)
 		return
 	}
-	defer os.RemoveAll(dbPath)
 	defer db.Close()
 
 	// Ensure the driver type is the expected value.
@@ -278,7 +463,6 @@ func TestInterface(t *testing.T) {
 	}
 
 	// Run all of the interface tests against the database.
-	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	// Change the maximum file size to a small value to force multiple flat
 	// files with the test data set.

@@ -8,17 +8,19 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"maps"
 	"sync"
 
+	"github.com/btcsuite/btcd/address/v2"
 	"github.com/btcsuite/btcd/blockchain"
-	"github.com/btcsuite/btcd/btcec"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil/v2"
+	"github.com/btcsuite/btcd/btcutil/v2/hdkeychain"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
 	"github.com/btcsuite/btcd/rpcclient"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcutil/hdkeychain"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 var (
@@ -72,7 +74,7 @@ type undoEntry struct {
 // hierarchy which promotes reproducibility between harness test runs.
 type memWallet struct {
 	coinbaseKey  *btcec.PrivateKey
-	coinbaseAddr btcutil.Address
+	coinbaseAddr address.Address
 
 	// hdRoot is the root master private key for the wallet.
 	hdRoot *hdkeychain.ExtendedKey
@@ -86,7 +88,7 @@ type memWallet struct {
 
 	// addrs tracks all addresses belonging to the wallet. The addresses
 	// are indexed by their keypath from the hdRoot.
-	addrs map[uint32]btcutil.Address
+	addrs map[uint32]address.Address
 
 	// utxos is the set of utxos spendable by the wallet.
 	utxos map[wire.OutPoint]*utxo
@@ -125,7 +127,7 @@ func newMemWallet(net *chaincfg.Params, harnessID uint32) (*memWallet, error) {
 
 	// The first child key from the hd root is reserved as the coinbase
 	// generation address.
-	coinbaseChild, err := hdRoot.Child(0)
+	coinbaseChild, err := hdRoot.Derive(0)
 	if err != nil {
 		return nil, err
 	}
@@ -133,6 +135,7 @@ func newMemWallet(net *chaincfg.Params, harnessID uint32) (*memWallet, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	coinbaseAddr, err := keyToAddr(coinbaseKey, net)
 	if err != nil {
 		return nil, err
@@ -140,7 +143,7 @@ func newMemWallet(net *chaincfg.Params, harnessID uint32) (*memWallet, error) {
 
 	// Track the coinbase generation address to ensure we properly track
 	// newly generated bitcoin we can spend.
-	addrs := make(map[uint32]btcutil.Address)
+	addrs := make(map[uint32]address.Address)
 	addrs[0] = coinbaseAddr
 
 	return &memWallet{
@@ -324,9 +327,7 @@ func (m *memWallet) unwindBlock(update *chainUpdate) {
 		delete(m.utxos, utxo)
 	}
 
-	for outPoint, utxo := range undo.utxosDestroyed {
-		m.utxos[outPoint] = utxo
-	}
+	maps.Copy(m.utxos, undo.utxosDestroyed)
 
 	delete(m.reorgJournal, update.blockHeight)
 }
@@ -334,10 +335,10 @@ func (m *memWallet) unwindBlock(update *chainUpdate) {
 // newAddress returns a new address from the wallet's hd key chain.  It also
 // loads the address into the RPC client's transaction filter to ensure any
 // transactions that involve it are delivered via the notifications.
-func (m *memWallet) newAddress() (btcutil.Address, error) {
+func (m *memWallet) newAddress() (address.Address, error) {
 	index := m.hdIndex
 
-	childKey, err := m.hdRoot.Child(index)
+	childKey, err := m.hdRoot.Derive(index)
 	if err != nil {
 		return nil, err
 	}
@@ -351,7 +352,7 @@ func (m *memWallet) newAddress() (btcutil.Address, error) {
 		return nil, err
 	}
 
-	err = m.rpc.LoadTxFilter(false, []btcutil.Address{addr}, nil)
+	err = m.rpc.LoadTxFilter(false, []address.Address{addr}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -366,7 +367,7 @@ func (m *memWallet) newAddress() (btcutil.Address, error) {
 // NewAddress returns a fresh address spendable by the wallet.
 //
 // This function is safe for concurrent access.
-func (m *memWallet) NewAddress() (btcutil.Address, error) {
+func (m *memWallet) NewAddress() (address.Address, error) {
 	m.Lock()
 	defer m.Unlock()
 
@@ -509,15 +510,17 @@ func (m *memWallet) CreateTransaction(outputs []*wire.TxOut,
 		outPoint := txIn.PreviousOutPoint
 		utxo := m.utxos[outPoint]
 
-		extendedKey, err := m.hdRoot.Child(utxo.keyIndex)
+		extendedKey, err := m.hdRoot.Derive(utxo.keyIndex)
 		if err != nil {
 			return nil, err
 		}
 
-		privKey, err := extendedKey.ECPrivKey()
+		privKeyOld, err := extendedKey.ECPrivKey()
 		if err != nil {
 			return nil, err
 		}
+
+		privKey, _ := btcec.PrivKeyFromBytes(privKeyOld.Serialize())
 
 		sigScript, err := txscript.SignatureScript(tx, i, utxo.pkScript,
 			txscript.SigHashAll, privKey, true)
@@ -581,9 +584,11 @@ func (m *memWallet) ConfirmedBalance() btcutil.Amount {
 }
 
 // keyToAddr maps the passed private to corresponding p2pkh address.
-func keyToAddr(key *btcec.PrivateKey, net *chaincfg.Params) (btcutil.Address, error) {
+func keyToAddr(key *btcec.PrivateKey, net *chaincfg.Params) (address.Address,
+	error) {
+
 	serializedKey := key.PubKey().SerializeCompressed()
-	pubKeyAddr, err := btcutil.NewAddressPubKey(serializedKey, net)
+	pubKeyAddr, err := address.NewAddressPubKey(serializedKey, net)
 	if err != nil {
 		return nil, err
 	}

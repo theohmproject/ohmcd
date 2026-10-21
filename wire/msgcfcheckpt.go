@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/chainhash/v2"
 )
 
 const (
@@ -20,6 +20,13 @@ const (
 	// maxCFHeadersLen is the max number of filter headers we will attempt
 	// to decode.
 	maxCFHeadersLen = 100000
+
+	// maxCFCheckptPayload calculates the maximum reasonable payload size
+	// for CF checkpoint messages.
+	//
+	// Calculation: 1 byte (filter type) + 32 bytes (stop hash) +
+	// 5 bytes (max varint) + (maxCFHeadersLen * 32 bytes per hash)
+	maxCFCheckptPayload = 1 + 32 + 5 + (maxCFHeadersLen * 32)
 )
 
 // ErrInsaneCFHeaderCount signals that we were asked to decode an
@@ -52,20 +59,22 @@ func (msg *MsgCFCheckpt) AddCFHeader(header *chainhash.Hash) error {
 // BtcDecode decodes r using the bitcoin protocol encoding into the receiver.
 // This is part of the Message interface implementation.
 func (msg *MsgCFCheckpt) BtcDecode(r io.Reader, pver uint32, _ MessageEncoding) error {
+	buf := binarySerializer.Borrow()
+	defer binarySerializer.Return(buf)
+
 	// Read filter type
-	err := readElement(r, &msg.FilterType)
-	if err != nil {
+	if _, err := io.ReadFull(r, buf[:1]); err != nil {
 		return err
 	}
+	msg.FilterType = FilterType(buf[0])
 
 	// Read stop hash
-	err = readElement(r, &msg.StopHash)
-	if err != nil {
+	if _, err := io.ReadFull(r, msg.StopHash[:]); err != nil {
 		return err
 	}
 
 	// Read number of filter headers
-	count, err := ReadVarInt(r, pver)
+	count, err := ReadVarIntBuf(r, pver, buf)
 	if err != nil {
 		return err
 	}
@@ -74,17 +83,52 @@ func (msg *MsgCFCheckpt) BtcDecode(r io.Reader, pver uint32, _ MessageEncoding) 
 	if count > maxCFHeadersLen {
 		return ErrInsaneCFHeaderCount
 	}
+	preallocate, err := canPreallocateElements(
+		r, count, chainhash.HashSize,
+	)
+	if err != nil {
+		return err
+	}
 
-	// Create a contiguous slice of hashes to deserialize into in order to
-	// reduce the number of allocations.
-	msg.FilterHeaders = make([]*chainhash.Hash, count)
+	if count == 0 {
+		msg.FilterHeaders = make([]*chainhash.Hash, 0)
+		return nil
+	}
+
+	// Optimize memory allocation by creating a single backing array for all
+	// hashes. Buffered readers reserve the exact count, while streaming
+	// readers grow the array as hashes arrive.
+	var hashes []chainhash.Hash
+	if preallocate {
+		hashes = make([]chainhash.Hash, count)
+		msg.FilterHeaders = make([]*chainhash.Hash, count)
+	} else {
+		hashes = make(
+			[]chainhash.Hash, 0,
+			min(count, defaultStreamingElementCap),
+		)
+		msg.FilterHeaders = nil
+	}
+
+	// Now we'll read all the hashes directly into the backing array we've
+	// created above. We'll then point the underlying filter header hashes
+	// into this backing array.
 	for i := uint64(0); i < count; i++ {
-		var cfh chainhash.Hash
-		err := readElement(r, &cfh)
-		if err != nil {
+		if !preallocate {
+			hashes = append(hashes, chainhash.Hash{})
+		}
+		if _, err := io.ReadFull(r, hashes[i][:]); err != nil {
 			return err
 		}
-		msg.FilterHeaders[i] = &cfh
+		if preallocate {
+			msg.FilterHeaders[i] = &hashes[i]
+		}
+	}
+	if !preallocate {
+		msg.FilterHeaders = make([]*chainhash.Hash, len(hashes))
+		for i := range hashes {
+			msg.FilterHeaders[i] = &hashes[i]
+		}
 	}
 
 	return nil
@@ -93,27 +137,29 @@ func (msg *MsgCFCheckpt) BtcDecode(r io.Reader, pver uint32, _ MessageEncoding) 
 // BtcEncode encodes the receiver to w using the bitcoin protocol encoding.
 // This is part of the Message interface implementation.
 func (msg *MsgCFCheckpt) BtcEncode(w io.Writer, pver uint32, _ MessageEncoding) error {
+	buf := binarySerializer.Borrow()
+	defer binarySerializer.Return(buf)
+
 	// Write filter type
-	err := writeElement(w, msg.FilterType)
-	if err != nil {
+	buf[0] = byte(msg.FilterType)
+	if _, err := w.Write(buf[:1]); err != nil {
 		return err
 	}
 
 	// Write stop hash
-	err = writeElement(w, msg.StopHash)
-	if err != nil {
+	if _, err := w.Write(msg.StopHash[:]); err != nil {
 		return err
 	}
 
 	// Write length of FilterHeaders slice
 	count := len(msg.FilterHeaders)
-	err = WriteVarInt(w, pver, uint64(count))
+	err := WriteVarIntBuf(w, pver, uint64(count), buf)
 	if err != nil {
 		return err
 	}
 
 	for _, cfh := range msg.FilterHeaders {
-		err := writeElement(w, cfh)
+		_, err := w.Write(cfh[:])
 		if err != nil {
 			return err
 		}
@@ -147,15 +193,19 @@ func (msg *MsgCFCheckpt) Command() string {
 // MaxPayloadLength returns the maximum length the payload can be for the
 // receiver. This is part of the Message interface implementation.
 func (msg *MsgCFCheckpt) MaxPayloadLength(pver uint32) uint32 {
-	// Message size depends on the blockchain height, so return general limit
-	// for all messages.
-	return MaxMessagePayload
+	// Use a more precise calculation based on the maximum number of
+	// filter headers we support. No no reason to read more than we'll
+	// process in BtcDecode.
+	return maxCFCheckptPayload
 }
 
-// NewMsgCFCheckpt returns a new bitcoin cfheaders message that conforms to
-// the Message interface. See MsgCFCheckpt for details.
+// NewMsgCFCheckpt returns a new bitcoin cfheaders message that conforms to the
+// Message interface. See MsgCFCheckpt for details.
 func NewMsgCFCheckpt(filterType FilterType, stopHash *chainhash.Hash,
 	headersCount int) *MsgCFCheckpt {
+
+	// We pre-allocate with an exact capacity when count is known to avoid
+	// slice growth during message construction.
 	return &MsgCFCheckpt{
 		FilterType:    filterType,
 		StopHash:      *stopHash,

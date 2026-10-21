@@ -1,4 +1,4 @@
-// Copyright (c) 2013-2016 The btcsuite developers
+// Copyright (c) 2013-2024 The btcsuite developers
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -13,7 +13,7 @@ import (
 // XXX pedro: we will probably need to bump this.
 const (
 	// ProtocolVersion is the latest protocol version this package supports.
-	ProtocolVersion uint32 = 70013
+	ProtocolVersion uint32 = 70016
 
 	// MultipleAddressVersion is the protocol version which added multiple
 	// addresses per message (pver >= MultipleAddressVersion).
@@ -51,6 +51,19 @@ const (
 	// FeeFilterVersion is the protocol version which added a new
 	// feefilter message.
 	FeeFilterVersion uint32 = 70013
+
+	// AddrV2Version is the protocol version which added two new messages.
+	// sendaddrv2 is sent during the version-verack handshake and signals
+	// support for sending and receiving the addrv2 message. In the future,
+	// new messages that occur during the version-verack handshake will not
+	// come with a protocol version bump.
+	AddrV2Version uint32 = 70016
+)
+
+const (
+	// NodeNetworkLimitedBlockThreshold is the number of blocks that a node
+	// broadcasting SFNodeNetworkLimited MUST be able to serve from the tip.
+	NodeNetworkLimitedBlockThreshold = 288
 )
 
 // ServiceFlag identifies services supported by a bitcoin peer.
@@ -86,18 +99,28 @@ const (
 	// SFNode2X is a flag used to indicate a peer is running the Segwit2X
 	// software.
 	SFNode2X
+
+	// SFNodeNetWorkLimited is a flag used to indicate a peer supports serving
+	// the last 288 blocks.
+	SFNodeNetworkLimited = 1 << 10
+
+	// SFNodeP2PV2 is a flag used to indicate a peer supports BIP324 v2
+	// connections.
+	SFNodeP2PV2 = 1 << 11
 )
 
 // Map of service flags back to their constant names for pretty printing.
 var sfStrings = map[ServiceFlag]string{
-	SFNodeNetwork: "SFNodeNetwork",
-	SFNodeGetUTXO: "SFNodeGetUTXO",
-	SFNodeBloom:   "SFNodeBloom",
-	SFNodeWitness: "SFNodeWitness",
-	SFNodeXthin:   "SFNodeXthin",
-	SFNodeBit5:    "SFNodeBit5",
-	SFNodeCF:      "SFNodeCF",
-	SFNode2X:      "SFNode2X",
+	SFNodeNetwork:        "SFNodeNetwork",
+	SFNodeGetUTXO:        "SFNodeGetUTXO",
+	SFNodeBloom:          "SFNodeBloom",
+	SFNodeWitness:        "SFNodeWitness",
+	SFNodeXthin:          "SFNodeXthin",
+	SFNodeBit5:           "SFNodeBit5",
+	SFNodeCF:             "SFNodeCF",
+	SFNode2X:             "SFNode2X",
+	SFNodeNetworkLimited: "SFNodeNetworkLimited",
+	SFNodeP2PV2:          "SFNodeP2PV2",
 }
 
 // orderedSFStrings is an ordered list of service flags from highest to
@@ -111,6 +134,13 @@ var orderedSFStrings = []ServiceFlag{
 	SFNodeBit5,
 	SFNodeCF,
 	SFNode2X,
+	SFNodeNetworkLimited,
+	SFNodeP2PV2,
+}
+
+// HasFlag returns a bool indicating if the service has the given flag.
+func (f ServiceFlag) HasFlag(s ServiceFlag) bool {
+	return f&s == s
 }
 
 // String returns the ServiceFlag in human-readable form.
@@ -141,7 +171,7 @@ func (f ServiceFlag) String() string {
 // BitcoinNet represents which bitcoin network a message belongs to.
 type BitcoinNet uint32
 
-// Constants used to indicate the message bitcoin network.  They can also be
+// Constants used to indicate the message bitcoin network. They can also be
 // used to seek to the next message when a stream's state is unknown, but
 // this package does not provide that functionality since it's generally a
 // better idea to simply disconnect clients that are misbehaving over TCP.
@@ -155,6 +185,13 @@ const (
 	// TestNet3 represents the test network (version 3).
 	TestNet3 BitcoinNet = 0x0709110b
 
+	// TestNet4 represents the test network (version 4).
+	TestNet4 BitcoinNet = 0x283f161c
+
+	// SigNet represents the public default SigNet. For custom signets,
+	// see CustomSignetParams.
+	SigNet BitcoinNet = 0x40CF030A
+
 	// SimNet represents the simulation test network.
 	SimNet BitcoinNet = 0x12141c16
 )
@@ -165,6 +202,8 @@ var bnStrings = map[BitcoinNet]string{
 	MainNet:  "MainNet",
 	TestNet:  "TestNet",
 	TestNet3: "TestNet3",
+	TestNet4: "TestNet4",
+	SigNet:   "SigNet",
 	SimNet:   "SimNet",
 }
 

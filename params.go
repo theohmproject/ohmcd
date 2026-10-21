@@ -5,8 +5,8 @@
 package main
 
 import (
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 // activeNetParams is a pointer to the parameters specific to the
@@ -21,7 +21,7 @@ type params struct {
 }
 
 // mainNetParams contains parameters specific to the main network
-// (wire.MainNet).  NOTE: The RPC port is intentionally different than the
+// (wire.MainNet).  NOTE: The RPC port is intentionally different from the
 // reference implementation because btcd does not handle wallet requests.  The
 // separate wallet process listens on the well-known port and forwards requests
 // it does not handle on to btcd.  This approach allows the wallet process
@@ -41,11 +41,19 @@ var regressionNetParams = params{
 }
 
 // testNet3Params contains parameters specific to the test network (version 3)
-// (wire.TestNet3).  NOTE: The RPC port is intentionally different than the
+// (wire.TestNet3).  NOTE: The RPC port is intentionally different from the
 // reference implementation - see the mainNetParams comment for details.
 var testNet3Params = params{
 	Params:  &chaincfg.TestNet3Params,
 	rpcPort: "18334",
+}
+
+// testNet4Params contains parameters specific to the test network (version 4)
+// (wire.TestNet4).  NOTE: The RPC port is intentionally different from the
+// reference implementation - see the mainNetParams comment for details.
+var testNet4Params = params{
+	Params:  &chaincfg.TestNet4Params,
+	rpcPort: "48334",
 }
 
 // simNetParams contains parameters specific to the simulation test network
@@ -53,6 +61,13 @@ var testNet3Params = params{
 var simNetParams = params{
 	Params:  &chaincfg.SimNetParams,
 	rpcPort: "18556",
+}
+
+// sigNetParams contains parameters specific to the Signet network
+// (wire.SigNet).
+var sigNetParams = params{
+	Params:  &chaincfg.SigNetParams,
+	rpcPort: "38332",
 }
 
 // netName returns the name used when referring to a bitcoin network.  At the

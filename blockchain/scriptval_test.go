@@ -6,17 +6,14 @@ package blockchain
 
 import (
 	"fmt"
-	"runtime"
 	"testing"
 
-	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/txscript/v2"
 )
 
 // TestCheckBlockScripts ensures that validating the all of the scripts in a
 // known-good block doesn't return an error.
 func TestCheckBlockScripts(t *testing.T) {
-	runtime.GOMAXPROCS(runtime.NumCPU())
-
 	testBlockNum := 277647
 	blockDataFile := fmt.Sprintf("%d.dat.bz2", testBlockNum)
 	blocks, err := loadBlocks(blockDataFile)
